@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "UI & Accessibility Report",
+  "type": "object",
+  "properties": {
+    "id": { "type": "string" },
+    "url": { "type": "string", "format": "uri" },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "breakpoint": { "type": "string" },
+          "width": { "type": "integer" },
+          "height": { "type": "integer" },
+          "screenshot": { "type": "string" },
+          "domSnapshotLength": { "type": "integer" },
+          "axe": { "type": "object" }
+        },
+        "required": ["breakpoint", "screenshot", "axe"]
+      }
+    }
+  },
+  "required": ["id", "url", "timestamp", "results"]
+}

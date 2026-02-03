@@ -1,0 +1,768 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Accessibility Check — Instant</title>
+    <!-- Add favicon (place favicon.ico or favicon.png in ui-agent/ directory) -->
+    <link rel="icon" type="image/png" href="./favicon.png">
+    <link rel="icon" type="image/x-icon" href="./favicon.ico">
+    <script>
+      // Inject stylesheet links with a cache-busting query so local edits appear immediately
+      (function(){
+        try{
+          const v = Date.now();
+          const head = document.getElementsByTagName('head')[0];
+          const files = ['./ai-accelerator-widget.css','./landing.css'];
+          files.forEach(f=>{
+            const l = document.createElement('link');
+            l.rel = 'stylesheet';
+            l.href = f + '?v=' + v;
+            head.appendChild(l);
+          });
+        }catch(e){ console.warn('failed to inject stylesheets', e); }
+      })();
+    </script>
+  </head>
+
+  <body>
+    <div class="page">
+        <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;800&display=swap" rel="stylesheet">
+
+        <!-- Hero + input grouped together; input now lives directly in the hero -->
+        <div class="hero-block">
+          <div class="hero">
+            <div class="hero-decor"></div>
+            <div class="hero-inner-full">
+              <div class="eyebrow">Check Accessibility</div>
+              <h1 class="title">Accessibility Check — Instant.</h1>
+              <p class="lead">Scan public URLs for WCAG issues, responsive glitches, and UX blockers. Includes screenshots + dev-friendly suggestions.</p>
+
+              <!-- Input placed directly inside the hero as requested (constrained width) -->
+              <div class="hero-url-wrap">
+                <div class="constrain-720">
+                  <div class="url-row">
+                    <input id="targetUrl" class="url-input" type="text" placeholder="Enter your website URL (e.g. https://example.com)" value="https://automationbookstore.dev/" />
+                    <button id="runBtn" type="button" class="url-submit" aria-label="Run test">➤</button>
+                  </div>
+                  <!-- place status and progress directly below the input so they are clearly grouped -->
+                  <div class="status-row hidden">
+                    <div id="status">Idle</div>
+                  </div>
+
+                  <div class="progress hidden"><i id="progBar"></i></div>
+                  
+                  <!-- Countdown Timer -->
+                  <div id="countdownTimer" class="countdown-timer hidden">
+                    <div class="countdown-icon">⏱️</div>
+                    <div class="countdown-content">
+                      <div class="countdown-label">Estimated time remaining</div>
+                      <div class="countdown-time"><span id="countdownValue">30</span>s</div>
+                    </div>
+                    <div class="countdown-info">Scanning viewport sizes, running WCAG checks...</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- removed .url-card wrapper; below content now lives directly under hero-block -->
+          <div class="container-920">
+            <div id="siteInfo" class="site-card">
+              <img id="siteFavicon" src="" alt="favicon" />
+              <div class="site-meta">
+                <h3 id="siteTitle">—</h3>
+                <p id="siteDesc">No description available.</p>
+              </div>
+            </div>
+            
+            <!-- Screenshots Gallery - positioned at top of results -->
+            <div id="gallery" class="gallery"></div>
+            
+            <!-- Accessibility Checklist -->
+            <div id="accessibilityChecklist" class="a11y-checklist hidden">
+              <h3 class="checklist-title">Accessibility Checklist</h3>
+              <div class="checklist-grid" id="checklistGrid"></div>
+            </div>
+            
+            <div id="widgetHost"></div>
+            <div id="links"></div>
+          </div>
+        </div>
+
+        <!-- Fix Suggestion Modal -->
+        <div id="fixModal" class="fix-modal-overlay hidden">
+          <div class="fix-modal">
+            <button class="fix-modal-close" onclick="closeFixModal()">&times;</button>
+            <div class="fix-modal-header">
+              <span class="fix-modal-severity"></span>
+              <h3 class="fix-modal-title"></h3>
+            </div>
+            <div class="fix-modal-body">
+              <div class="fix-modal-section">
+                <h4>🎯 Issue Description</h4>
+                <p class="fix-modal-description"></p>
+              </div>
+              <div class="fix-modal-section">
+                <h4>👥 Who is affected</h4>
+                <p class="fix-modal-affected"></p>
+              </div>
+              <div class="fix-modal-section">
+                <h4>📍 Found at</h4>
+                <code class="fix-modal-selector"></code>
+              </div>
+              <div class="fix-modal-section">
+                <h4>❌ Problem Code</h4>
+                <pre class="fix-modal-problem-code"></pre>
+              </div>
+              <div class="fix-modal-section">
+                <h4>✅ Suggested Fix</h4>
+                <pre class="fix-modal-fix-code"></pre>
+              </div>
+              <div class="fix-modal-section">
+                <h4>💡 Explanation</h4>
+                <p class="fix-modal-explanation"></p>
+              </div>
+              <div class="fix-modal-section fix-modal-meta">
+                <span class="fix-modal-wcag"></span>
+                <span class="fix-modal-effort"></span>
+                <a class="fix-modal-help" target="_blank">Learn more →</a>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Issues List Modal (for clicking stat cards) -->
+        <div id="issuesListModal" class="fix-modal-overlay hidden">
+          <div class="fix-modal issues-list-modal">
+            <button class="fix-modal-close" onclick="closeIssuesListModal()">&times;</button>
+            <div class="fix-modal-header">
+              <span id="issuesListSeverity" class="fix-modal-severity"></span>
+              <h3 id="issuesListTitle" class="fix-modal-title"></h3>
+            </div>
+            <div class="fix-modal-body">
+              <div id="issuesListContainer" class="issues-list-container"></div>
+            </div>
+          </div>
+        </div>
+
+        <script type="module">
+
+          const ORCHESTRATOR = (window.ORCHESTRATOR_URL || 'http://localhost:3000');
+
+          // Countdown timer configuration
+          const ESTIMATED_SCAN_TIME = 60; // seconds
+          let countdownInterval = null;
+          let countdownValue = ESTIMATED_SCAN_TIME;
+
+          function startCountdown() {
+            const timerEl = document.getElementById('countdownTimer');
+            const valueEl = document.getElementById('countdownValue');
+            if (!timerEl || !valueEl) return;
+            
+            // Reset and show
+            countdownValue = ESTIMATED_SCAN_TIME;
+            valueEl.textContent = countdownValue;
+            timerEl.classList.remove('hidden');
+            timerEl.classList.remove('fade-out');
+            
+            // Clear any existing interval
+            if (countdownInterval) clearInterval(countdownInterval);
+            
+            // Start countdown
+            countdownInterval = setInterval(() => {
+              countdownValue--;
+              if (countdownValue <= 0) {
+                // If it goes below 0, show "Almost done..."
+                valueEl.textContent = '...';
+                valueEl.parentElement.innerHTML = '<span class="countdown-extended">Almost done...</span>';
+              } else {
+                valueEl.textContent = countdownValue;
+              }
+            }, 1000);
+          }
+
+          function stopCountdown() {
+            const timerEl = document.getElementById('countdownTimer');
+            if (countdownInterval) {
+              clearInterval(countdownInterval);
+              countdownInterval = null;
+            }
+            if (timerEl) {
+              // Fade out animation
+              timerEl.classList.add('fade-out');
+              setTimeout(() => {
+                timerEl.classList.add('hidden');
+                timerEl.classList.remove('fade-out');
+                // Reset the countdown display for next run
+                const valueEl = document.getElementById('countdownValue');
+                if (valueEl) {
+                  valueEl.parentElement.innerHTML = '<span id="countdownValue">' + ESTIMATED_SCAN_TIME + '</span>s';
+                }
+              }, 500);
+            }
+          }
+
+          // Store issues globally for modal access
+          let globalIssues = [];
+
+          // Accessibility Checklist Configuration
+          const A11Y_CHECKLIST = [
+            { id: 'html-has-lang', label: 'Language Attribute', description: 'HTML has lang attribute', category: 'Structure' },
+            { id: 'document-title', label: 'Page Title', description: 'Page has a descriptive title', category: 'Structure' },
+            { id: 'meta-viewport', label: 'Viewport Meta', description: 'Viewport allows zoom', category: 'Structure' },
+            { id: 'image-alt', label: 'Image Alt Text', description: 'All images have alt text', category: 'Content' },
+            { id: 'link-name', label: 'Link Text', description: 'Links have accessible names', category: 'Navigation' },
+            { id: 'button-name', label: 'Button Labels', description: 'Buttons have accessible names', category: 'Interactive' },
+            { id: 'label', label: 'Form Labels', description: 'Form inputs have labels', category: 'Forms' },
+            { id: 'color-contrast', label: 'Color Contrast', description: 'Text has sufficient contrast', category: 'Visual' },
+            { id: 'heading-order', label: 'Heading Order', description: 'Headings are in order', category: 'Structure' },
+            { id: 'bypass', label: 'Skip Links', description: 'Skip navigation available', category: 'Navigation' },
+            { id: 'aria-roles', label: 'ARIA Roles', description: 'ARIA roles are valid', category: 'ARIA' },
+            { id: 'keyboard', label: 'Keyboard Access', description: 'All interactive elements accessible', category: 'Interactive' },
+          ];
+
+          function renderChecklist(issues) {
+            const container = document.getElementById('accessibilityChecklist');
+            const grid = document.getElementById('checklistGrid');
+            if (!container || !grid) return;
+            
+            // Store issues globally for modal
+            globalIssues = issues || [];
+            
+            // Get list of failed rule IDs
+            const failedRules = new Set();
+            if (issues && Array.isArray(issues)) {
+              issues.forEach(issue => {
+                if (issue.ruleId) failedRules.add(issue.ruleId);
+                if (issue.id) failedRules.add(issue.id);
+              });
+            }
+            
+            // Build checklist HTML
+            let html = '';
+            A11Y_CHECKLIST.forEach(item => {
+              const passed = !failedRules.has(item.id);
+              const statusClass = passed ? 'check-pass' : 'check-fail';
+              const icon = passed ? '✓' : '✗';
+              const clickable = !passed ? 'clickable' : '';
+              const onclick = !passed ? `onclick="showFixModal('${item.id}')"` : '';
+              html += `
+                <div class="checklist-item ${statusClass} ${clickable}" ${onclick}>
+                  <div class="check-icon">${icon}</div>
+                  <div class="check-content">
+                    <div class="check-label">${item.label}</div>
+                    <div class="check-desc">${item.description}</div>
+                  </div>
+                  <div class="check-category">${item.category}</div>
+                  ${!passed ? '<div class="check-arrow">→</div>' : ''}
+                </div>
+              `;
+            });
+            
+            grid.innerHTML = html;
+            container.classList.remove('hidden');
+          }
+
+          // Fix Modal Functions
+          function showFixModal(ruleId) {
+            // Find the issue matching this rule
+            const issue = globalIssues.find(i => i.ruleId === ruleId || i.id === ruleId);
+            if (!issue) {
+              console.warn('No issue found for rule:', ruleId);
+              return;
+            }
+            
+            const modal = document.getElementById('fixModal');
+            if (!modal) return;
+            
+            // Populate modal content
+            const severityEl = modal.querySelector('.fix-modal-severity');
+            const titleEl = modal.querySelector('.fix-modal-title');
+            const descEl = modal.querySelector('.fix-modal-description');
+            const affectedEl = modal.querySelector('.fix-modal-affected');
+            const selectorEl = modal.querySelector('.fix-modal-selector');
+            const problemCodeEl = modal.querySelector('.fix-modal-problem-code');
+            const fixCodeEl = modal.querySelector('.fix-modal-fix-code');
+            const explanationEl = modal.querySelector('.fix-modal-explanation');
+            const wcagEl = modal.querySelector('.fix-modal-wcag');
+            const effortEl = modal.querySelector('.fix-modal-effort');
+            const helpEl = modal.querySelector('.fix-modal-help');
+            
+            // Set severity badge
+            const severity = issue.severity || 'Unknown';
+            severityEl.textContent = severity;
+            severityEl.className = 'fix-modal-severity severity-' + severity.toLowerCase();
+            
+            // Set title
+            titleEl.textContent = issue.title || ruleId;
+            
+            // Set description/impact
+            descEl.textContent = issue.impact || issue.suggestedFix || 'No description available.';
+            
+            // Set affected users
+            const affected = issue.disabilitiesAffected || [];
+            affectedEl.textContent = affected.length > 0 ? affected.join(', ') : 'Various users';
+            
+            // Set selector(s)
+            const selectors = issue.selectors || [];
+            selectorEl.textContent = selectors.slice(0, 3).join('\\n') + (selectors.length > 3 ? `\\n... and ${selectors.length - 3} more` : '');
+            
+            // Set code examples
+            const code = issue.code || {};
+            problemCodeEl.textContent = code.problem || issue.evidence || 'No example available';
+            fixCodeEl.textContent = code.fix || issue.suggestedFix || 'See documentation for fix guidance';
+            
+            // Set explanation
+            explanationEl.textContent = issue.explanation || issue.failureSummary || issue.suggestedFix || '';
+            
+            // Set WCAG criteria
+            const wcag = issue.wcagCriteria || [];
+            wcagEl.textContent = wcag.length > 0 ? 'WCAG ' + wcag.join(', ') : '';
+            
+            // Set effort
+            const effortMap = { S: '⚡ Quick Fix (~5 min)', M: '🔧 Medium (~30 min)', L: '🏗️ Large (1+ hours)' };
+            effortEl.textContent = effortMap[issue.effort] || '';
+            
+            // Set help link
+            if (issue.helpUrl) {
+              helpEl.href = issue.helpUrl;
+              helpEl.style.display = 'inline';
+            } else {
+              helpEl.style.display = 'none';
+            }
+            
+            // Show modal
+            modal.classList.remove('hidden');
+            document.body.style.overflow = 'hidden';
+          }
+          
+          // Make functions globally accessible
+          window.showFixModal = showFixModal;
+          window.closeFixModal = function() {
+            const modal = document.getElementById('fixModal');
+            if (modal) {
+              modal.classList.add('hidden');
+              document.body.style.overflow = '';
+            }
+          };
+          
+          // Issues List Modal Functions (for clicking stat cards and WAVE categories)
+          window.showIssuesListModal = function(category) {
+            // Filter issues based on category type
+            let filtered = [];
+            let displayLabel = category;
+            
+            // Handle WAVE-style categories
+            switch(category.toLowerCase()) {
+              case 'contrast':
+                filtered = globalIssues.filter(i => 
+                  (i.ruleId || '').includes('color-contrast') || 
+                  (i.title || '').toLowerCase().includes('contrast')
+                );
+                displayLabel = 'Contrast Errors';
+                break;
+              case 'structural':
+                filtered = globalIssues.filter(i => 
+                  (i.ruleId || '').includes('heading') || 
+                  (i.ruleId || '').includes('landmark') ||
+                  (i.ruleId || '').includes('region') ||
+                  (i.ruleId || '').includes('list')
+                );
+                displayLabel = 'Structural Issues';
+                break;
+              case 'aria':
+                filtered = globalIssues.filter(i => 
+                  (i.ruleId || '').includes('aria') ||
+                  (i.title || '').toLowerCase().includes('aria')
+                );
+                displayLabel = 'ARIA Issues';
+                break;
+              case 'critical':
+              case 'serious':
+              case 'moderate':
+              case 'minor':
+                // Standard severity filter
+                filtered = globalIssues.filter(i => {
+                  const issueSeverity = (i.severity || '').toLowerCase();
+                  return issueSeverity === category.toLowerCase();
+                });
+                displayLabel = category + ' Issues';
+                break;
+              default:
+                // Fallback to severity match
+                filtered = globalIssues.filter(i => {
+                  const issueSeverity = (i.severity || '').toLowerCase();
+                  return issueSeverity === category.toLowerCase();
+                });
+            }
+            
+            if (filtered.length === 0) return;
+            
+            const modal = document.getElementById('issuesListModal');
+            const severityEl = document.getElementById('issuesListSeverity');
+            const titleEl = document.getElementById('issuesListTitle');
+            const container = document.getElementById('issuesListContainer');
+            
+            // Set header
+            severityEl.textContent = displayLabel;
+            severityEl.className = 'fix-modal-severity severity-' + category.toLowerCase();
+            titleEl.textContent = `${filtered.length} ${displayLabel}`;
+            
+            // Build issues list HTML
+            let html = '';
+            filtered.forEach((issue, idx) => {
+              const selectors = (issue.selectors || []).slice(0, 2).join(', ');
+              const wcag = (issue.wcagCriteria || []).join(', ');
+              html += `
+                <div class="issue-list-item" onclick="window.closeIssuesListModal(); window.showFixModal('${issue.ruleId || issue.id}')">
+                  <div class="issue-list-num">${idx + 1}</div>
+                  <div class="issue-list-content">
+                    <div class="issue-list-title">${issue.title || issue.ruleId}</div>
+                    <div class="issue-list-meta">
+                      ${wcag ? `<span class="issue-list-wcag">WCAG ${wcag}</span>` : ''}
+                      ${issue.count ? `<span class="issue-list-count">${issue.count} occurrence${issue.count > 1 ? 's' : ''}</span>` : ''}
+                    </div>
+                    ${selectors ? `<code class="issue-list-selector">${selectors}</code>` : ''}
+                  </div>
+                  <div class="issue-list-arrow">→</div>
+                </div>
+              `;
+            });
+            
+            container.innerHTML = html;
+            modal.classList.remove('hidden');
+            document.body.style.overflow = 'hidden';
+          };
+          
+          window.closeIssuesListModal = function() {
+            const modal = document.getElementById('issuesListModal');
+            if (modal) {
+              modal.classList.add('hidden');
+              document.body.style.overflow = '';
+            }
+          };
+          
+          // Close modals on overlay click or Escape key
+          document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+              window.closeFixModal();
+              window.closeIssuesListModal();
+            }
+          });
+          document.getElementById('fixModal')?.addEventListener('click', (e) => {
+            if (e.target.classList.contains('fix-modal-overlay')) window.closeFixModal();
+          });
+          document.getElementById('issuesListModal')?.addEventListener('click', (e) => {
+            if (e.target.classList.contains('fix-modal-overlay')) window.closeIssuesListModal();
+          });
+
+          // widget will be created only after a run completes to avoid showing initial placeholder UI
+          let w = null;
+          const runBtn = document.getElementById('runBtn');
+          const statusEl = document.getElementById('status');
+          const targetInput = document.getElementById('targetUrl');
+
+          // Prefill target from query param if provided (demo.html?url=...)
+          try{
+            const params = new URLSearchParams(window.location.search);
+            const q = params.get('url');
+            if(q){ targetInput.value = q; }
+          }catch(e){ /* ignore */ }
+
+          function setStatus(s){ statusEl.textContent = s; }
+
+          function showSiteInfo(meta){
+            if(!meta) return;
+            const card = document.getElementById('siteInfo');
+            document.getElementById('siteTitle').textContent = meta.title || meta.url || 'Unknown site';
+            document.getElementById('siteDesc').textContent = meta.description || 'No description available.';
+            const fav = document.getElementById('siteFavicon');
+            fav.src = meta.favicon || (new URL('/', (meta.url||'')).toString() + 'favicon.ico');
+            card.style.display = '';
+          }
+
+          function setProgress(pct){
+            const bar = document.getElementById('progBar');
+            const prog = document.querySelector('.progress');
+            if(!prog || !bar) return;
+            // debug logging to confirm progress updates
+            try{ console.debug('setProgress', pct); }catch(e){}
+            // set width first, then toggle visibility so styling updates are visible immediately
+            bar.style.width = (pct || 0) + '%';
+
+            // show the progress bar only while a run is active
+            if (pct > 0 && pct < 100) {
+              prog.classList.remove('hidden');
+              prog.classList.remove('success');
+              const statusRow = document.querySelector('.status-row');
+              if (statusRow) statusRow.classList.remove('success');
+            } else if (pct >= 100) {
+              // finished — keep bar visible briefly and apply success styling
+              prog.classList.remove('hidden');
+              prog.classList.add('success');
+              const statusRow = document.querySelector('.status-row');
+              if (statusRow) statusRow.classList.add('success');
+            } else {
+              // pct === 0 or undefined — hide progress and clear success state
+              prog.classList.add('hidden');
+              prog.classList.remove('success');
+              const statusRow = document.querySelector('.status-row');
+              if (statusRow) statusRow.classList.remove('success');
+            }
+          }
+
+          function clearGallery(){ document.getElementById('gallery').innerHTML = ''; }
+          function addThumb(url){ const g = document.getElementById('gallery'); const d = document.createElement('div'); d.className='thumb card'; d.innerHTML = `<img src="${url}" alt="screenshot" />`; g.appendChild(d); }
+
+          // Wrap run logic in a named handler so we can attach it and fall back to delegated handling
+          const runHandler = async () => {
+            console.debug('runHandler invoked');
+            try{
+              const url = (targetInput.value || '').trim();
+              console.debug('URL to run:', url);
+              if(!url) return alert('Please enter a URL to test');
+
+              // reveal the status row only when a run is initiated
+              const statusRowEl = document.querySelector('.status-row');
+              if (statusRowEl) { statusRowEl.classList.remove('hidden'); statusRowEl.classList.remove('success'); }
+
+              setStatus('Starting...');
+              if (runBtn) { runBtn.disabled = true; }
+              setProgress(5);
+              startCountdown(); // Start the countdown timer
+              clearGallery(); const linksEl = document.getElementById('links'); if(linksEl) linksEl.textContent='';
+
+              // SCROLL TO DETAILS after submit
+              setTimeout(() => {
+                const details = document.getElementById('widgetHost');
+                if(details) {
+                  details.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+              }, 200);
+
+              // Get site metadata first (server-side) to show context
+              try{
+                setStatus('Fetching site metadata...'); setProgress(15);
+                const mres = await fetch(`${ORCHESTRATOR}/meta?url=${encodeURIComponent(url)}`);
+                let meta = null;
+                if(mres.ok) meta = await mres.json();
+                showSiteInfo(Object.assign({url}, meta||{}));
+              }catch(e){ console.warn('meta fetch failed', e); }
+
+              // Run the accessibility checks
+              try{
+                setStatus('Running accessibility checks...'); setProgress(35);
+                const res = await fetch(`${ORCHESTRATOR}/run`, {
+                  method: 'POST', headers: {'Content-Type':'application/json'},
+                  body: JSON.stringify({ url })
+                });
+
+                if(!res.ok){
+                  const txt = await res.text();
+                  throw new Error(`Orchestrator returned ${res.status}: ${txt}`);
+                }
+
+                const body = await res.json();
+                setProgress(70);
+
+                const report = body && body.report ? body.report : body;
+
+                // prefer orchestrator artifact URLs and ensure both keys exist for widget compatibility
+                const screenshots = (body && body.artifacts && body.artifacts.screenshots) || [];
+                if (report && report.results){
+                  let i = 0;
+                  report.results = report.results.map(r => {
+                    const out = Object.assign({}, r);
+                    if (screenshots[i]){
+                      out.screenshotUrl = screenshots[i];
+                      out.screenshot = screenshots[i];
+                      i++;
+                    } else if (out.screenshot){
+                      // normalize existing path to a URL served by orchestrator
+                      try{ const name = out.screenshot.split('/').pop(); out.screenshot = `${ORCHESTRATOR}/artifacts/${encodeURIComponent(name)}`; out.screenshotUrl = out.screenshot; }catch(e){}
+                    }
+                    return out;
+                  });
+                }
+
+                // create widget on-demand (so initial sidebar isn't shown before a run)
+                if(!w){
+                  const host = document.getElementById('widgetHost');
+                  // try dynamic import first (cache-busted)
+                  try{
+                    await import(`./ai-accelerator-widget.js?v=${Date.now()}`);
+                  }catch(e){
+                    console.warn('Dynamic import failed, attempting script tag fallback', e);
+                    // fallback: inject a script tag and wait for it to load
+                    try{
+                      await new Promise((resolve, reject) => {
+                        const s = document.createElement('script');
+                        s.src = `./ai-accelerator-widget.js?v=${Date.now()}`;
+                        s.async = true;
+                        s.onload = () => resolve();
+                        s.onerror = (err) => reject(err);
+                        document.head.appendChild(s);
+                      });
+                    }catch(err){
+                      console.error('Fallback script load failed', err);
+                      setStatus('Failed to load results widget');
+                    }
+                  }
+
+                  // create the element and attach it (clear previous content first)
+                  try{
+                    w = document.createElement('ai-accelerator-widget');
+                    w.setAttribute('orchestrator-url', ORCHESTRATOR);
+                    if(host) { host.innerHTML = ''; host.appendChild(w); }
+                    if (w && typeof w.addEventListener === 'function') w.addEventListener('export', e => console.log('Export event', e.detail));
+                  }catch(e){
+                    console.error('Failed to instantiate widget element', e);
+                    setStatus('Widget initialization failed');
+                  }
+                }
+
+                // feed widget (with debug logging)
+                try{
+                  // The widget expects the enriched analysis data, not the raw report
+                  // The analysis comes from body.analysis (which has issues, uiIssues, recommendations, etc.)
+                  // llmClient.js returns { local: true, analysis: {...} }, so unwrap if needed
+                  let analysisData = body.analysis || {};
+                  // Unwrap nested analysis structure from llmClient
+                  if (analysisData.analysis && typeof analysisData.analysis === 'object') {
+                    analysisData = analysisData.analysis;
+                  }
+                  if (!analysisData.url && report.url) {
+                    analysisData.url = report.url;
+                  }
+                  // If analysis has parsed data (from LLM), use that
+                  const widgetData = analysisData.parsed || analysisData;
+                  if (!widgetData.url && report.url) {
+                    widgetData.url = report.url;
+                  }
+                  
+                  console.debug('analysis to feed widget:', widgetData);
+                  
+                  // Render the accessibility checklist
+                  renderChecklist(widgetData.issues || []);
+                  
+                  // Try new loadData method, fallback to setReport for compatibility
+                  if (w && typeof w.loadData === 'function'){
+                    console.debug('Calling w.loadData');
+                    w.loadData(widgetData);
+                  } else if (w && typeof w.setReport === 'function'){
+                    console.debug('Calling w.setReport (legacy)');
+                    w.setReport(widgetData);
+                    // If the orchestrator returned artifact URLs, set the widget's `run-id`
+                    // so the widget can fetch the parsed JSON artifact when available.
+                    try{
+                      const repUrl = (body && body.artifacts && body.artifacts.reportUrl) ? body.artifacts.reportUrl : null;
+                      if(repUrl && w.setAttribute){
+                        // extract basename like 5006cc95-...-report.json -> 5006cc95-... 
+                        try{
+                          const parts = repUrl.split('/').pop().split('?')[0];
+                          const base = parts.replace(/-report\.json$/,'');
+                          w.setAttribute('run-id', base);
+                          console.debug('Set widget run-id to', base);
+                        }catch(e){ console.warn('Failed to set widget run-id from', repUrl, e); }
+                      }
+                    }catch(e){ console.warn('run-id set failed', e); }
+                  } else {
+                    console.warn('Widget not available or missing setReport()', w);
+                    setStatus('Widget not available');
+                  }
+                }catch(e){
+                  console.error('Error while feeding widget', e);
+                }
+
+                // Stop countdown timer - results are ready
+                stopCountdown();
+
+                // render thumbnails
+                if (report && Array.isArray(report.results)){
+                  report.results.forEach(r => { if(r.screenshot) addThumb(r.screenshot); });
+                }
+
+                // after data is visible: scroll to the widget, then show a small pop animation and hide the status row
+                try{
+                  const widgetHost = document.getElementById('widgetHost');
+                  // allow layout to settle then scroll the rendered data into view
+                  if(widgetHost){
+                    setTimeout(()=>{
+                      try{ widgetHost.scrollIntoView({ behavior: 'smooth', block: 'start' }); }catch(e){}
+                    }, 220);
+                  }
+
+                  const statusRow = document.querySelector('.status-row');
+                  if(statusRow){
+                    // slight delay so users see the success state briefly, then pop away
+                    setTimeout(()=>{
+                      statusRow.classList.add('pop');
+                      // remove from view after animation completes
+                      setTimeout(()=>{
+                        statusRow.classList.add('hidden');
+                        statusRow.classList.remove('pop');
+                        statusRow.classList.remove('success');
+                      }, 900);
+                    }, 700);
+                  }
+                }catch(e){ console.warn('post-render UI actions failed', e); }
+
+                // links to report & analysis
+                if(body && body.artifacts){
+                  const links = document.getElementById('links'); if(links) links.innerHTML = '';
+                  if(body.artifacts.reportUrl) links.innerHTML += `<a class="report-btn" href="${body.artifacts.reportUrl}" target="_blank">Export JSON</a>`;
+                  if(body.artifacts.analysisUrl) links.innerHTML += `<a class="analysis-btn" href="${body.artifacts.analysisUrl}" target="_blank">View analysis</a>`;
+                }
+
+                setProgress(100); setStatus('Done');
+              }catch(err){
+                console.error('Run handler error:', err);
+                setStatus('Error: ' + (err.message || err));
+                setProgress(0);
+                stopCountdown(); // Stop countdown on error
+              } finally {
+                if (runBtn) runBtn.disabled = false;
+                setTimeout(()=>setProgress(0),500);
+              }
+            }catch(e){
+              console.error('runHandler top-level error', e);
+            }
+          };
+
+          // Attach handler and install delegated fallback. Log attach status.
+          try{
+            runBtn.addEventListener('click', runHandler);
+            console.debug('Attached click listener to runBtn');
+          }catch(e){
+            console.warn('Failed to attach click listener to runBtn, installing delegated fallback', e);
+            document.addEventListener('click', (ev)=>{
+              const t = ev.target;
+              if(!t) return;
+              if(t.id === 'runBtn' || (t.closest && t.closest('.url-submit'))){
+                runHandler();
+              }
+            });
+          }
+
+          // allow Enter key in the URL input to trigger the run action
+          if (targetInput) {
+            targetInput.addEventListener('keydown', (e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                // if runBtn exists, trigger its click handler
+                const btn = document.getElementById('runBtn');
+                if (btn) btn.click();
+              }
+            });
+          }
+
+          // listen for export event from widget (guarded in case widget isn't created)
+          if (w && typeof w.addEventListener === 'function') {
+            w.addEventListener('export', e => console.log('Export event', e.detail));
+          }
+        </script>
+      </div>
+    </div>
+  </body>
+</html>

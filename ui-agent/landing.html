@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Accessibility Check — Instant</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <!-- Add favicon (place favicon.ico or favicon.png in ui-agent/ directory) -->
+    <link rel="icon" type="image/png" href="./favicon.png">
+    <link rel="icon" type="image/x-icon" href="./favicon.ico">
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./landing.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="wrap">
+      <div class="brand">AI Accelerator</div>
+      <nav>
+        <a class="nav-link" href="demo.html">Demo</a>
+        <a class="nav-link" href="#features">What it does</a>
+        <a class="cta" href="demo.html">Run a Scan</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="hero">
+    <div class="hero-decor"></div>
+    <div class="wrap hero-inner">
+      <div class="eyebrow">Design for Everyone</div>
+      <h1 class="title">Accessibility Check — Instant.</h1>
+
+      <p class="lead">Scan public URLs for WCAG issues, responsive glitches, and UX blockers. Includes screenshots + dev-friendly suggestions.</p>
+
+        <div class="actions">
+          <a class="report-btn" href="report.html">Report</a>
+          <a class="analysis-btn" href="analysis.html">Analysis</a>
+        </div>
+      <div class="actions">
+        <a class="btn primary" href="demo.html">Try the Demo</a>
+        <a class="btn ghost" href="#features">Learn More</a>
+      </div>
+
+    </div>
+  </main>
+
+  <section id="features" class="features wrap">
+    <div class="feature">
+      <h3>Automated Scans</h3>
+      <p>Playwright + axe-core scans run across mobile, tablet and desktop breakpoints.</p>
+    </div>
+    <div class="feature">
+      <h3>Actionable Fixes</h3>
+      <p>Plain-English explanations and small code snippets your developers can apply quickly.</p>
+    </div>
+    <div class="feature">
+      <h3>Artifact Gallery</h3>
+      <p>Screenshots, DOM snapshots and a downloadable JSON report for each run.</p>
+    </div>
+      <div class="feature">
+        <h3>Consistent UI/UX</h3>
+        <p>Ensuring a seamless experience across demo and landing pages.</p>
+      </div>
+  </section>
+
+  <footer class="site-footer">
+    <div class="wrap footer-inner">
+      <div>© <strong>AI Accelerator</strong> — Accessibility-first developer tooling.</div>
+      <div class="footer-links">
+        <a href="demo.html">Open Demo</a>
+        <a href="README.md">Docs</a>
+      </div>
+    </div>
+    </footer>
+
+    <style>
+      /* Report/analysis buttons to match theme */
+      .report-btn, .analysis-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 18px;
+        border-radius: 12px;
+        border: 2px solid var(--accent-1, #6df2ff);
+        background: transparent;
+        color: var(--accent-1, #6df2ff);
+        font-weight: 700;
+        text-decoration: none;
+        box-shadow: none;
+        transition: border-color 0.2s, color 0.2s;
+      }
+      .report-btn:hover, .analysis-btn:hover, .report-btn:focus, .analysis-btn:focus {
+        border-color: var(--accent-2, #7b61ff);
+        color: var(--accent-2, #7b61ff);
+      }
+    </style>
+  </footer>
+
+</body>
+</html>

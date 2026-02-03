@@ -1,0 +1,70 @@
+# Dependencies
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Build outputs
+dist/
+build/
+*.egg-info/
+
+# Artifacts & Generated files
+orchestrator/artifacts/
+reports/*.json
+!reports/schema.json
+
+# Logs
+*.log
+*.pid
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE & Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.settings/
+
+# Test outputs
+coverage/
+.nyc_output/
+test-results/
+
+# Playwright
+playwright-report/
+playwright/.cache/
+
+# Temp files
+*.tmp
+*.temp
+.cache/
+
+# Large model files (if any)
+*.bin
+*.gguf
+*.safetensors
+orchestrator/text-generation-webui/
+
+# Package manager locks (optional - uncomment if you want to ignore)
+# package-lock.json
+# yarn.lock

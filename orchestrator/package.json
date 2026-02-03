@@ -1,0 +1,17 @@
+{
+  "name": "ui-a11y-orchestrator",
+  "version": "0.1.0",
+  "description": "POC orchestrator for AI-powered UI and accessibility testing",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "axe-core": "^4.8.0",
+    "body-parser": "^1.20.2",
+    "dotenv": "^17.2.3",
+    "express": "^4.18.2",
+    "playwright": "^1.40.0",
+    "uuid": "^9.0.0"
+  }
+}
