@@ -33,6 +33,9 @@ class AIAcceleratorWidget extends HTMLElement {
    * Run accessibility analysis on a URL
    */
   async runAnalysis(url, apiEndpoint = 'http://localhost:3000/run') {
+    // Cancel any previous enrichment SSE
+    this._stopEnrichmentSSE?.();
+
     this._loading = true;
     this._error = null;
     this._render();
@@ -50,8 +53,22 @@ class AIAcceleratorWidget extends HTMLElement {
 
       const data = await response.json();
       this._data = data;
+      this._render();
+
+      // If server returned a fast-mode indicator, open an SSE to receive LLM-enriched final analysis
+      const reportId = data?.report?.id;
+      const asyncLLM = data?.analysis && data.analysis.asyncLLM;
+      if (reportId && asyncLLM) {
+        if (typeof window !== 'undefined' && window.EventSource) {
+          this._startEnrichmentSSE(reportId, apiEndpoint);
+        } else {
+          // No EventSource support; fallback is not implemented (older browsers).
+          console.warn('EventSource not available in this environment — LLM push updates will not be received automatically.');
+        }
+      }
     } catch (err) {
       this._error = err.message;
+      this._render();
     } finally {
       this._loading = false;
       this._render();
@@ -204,10 +221,14 @@ class AIAcceleratorWidget extends HTMLElement {
 
   _renderHeader(data) {
     const url = data.url || data.summary?.url || 'Unknown URL';
+    const enrichmentPending = (data && data.analysis && data.analysis.asyncLLM) || this._enrichmentSSE;
     return `
       <header class="aa-header">
         <h1>Accessibility & UI Quality Report</h1>
-        <span class="aa-url-badge">${this._escapeHtml(url)}</span>
+        <div style="display:flex;align-items:center;gap:12px;">
+          <span class="aa-url-badge">${this._escapeHtml(url)}</span>
+          ${enrichmentPending ? '<span class="aa-llm-pending">LLM enrichment in progress…</span>' : ''}
+        </div>
       </header>
     `;
   }

@@ -1,6 +1,9 @@
 const fetch = globalThis.fetch;
 const path = require('path');
 const fs = require('fs');
+const { EventEmitter } = require('events');
+// EventEmitter used to notify the server when LLM-enriched analysis is available
+const llmEvents = new EventEmitter();
 
 // If the user intends to use Ollama but didn't set a URL, default to localhost:11434
 const LLM_API_URL = process.env.LLM_API_URL || (process.env.LLM_API_MODE === 'ollama' ? 'http://localhost:11434' : null); // e.g. http://localhost:8080/generate
@@ -739,6 +742,21 @@ async function analyzeWithLLM(report, opts = {}) {
   // Always build deterministic analysis first as a baseline
   const deterministicAnalysis = buildDeterministicAnalysis(report);
 
+  // Fast-mode: return deterministic analysis immediately and run remote LLM enrichment
+  // asynchronously (useful to keep /run response <15s). Set opts.fast=false to block
+  if (opts.fast && !LLM_USE_LOCAL && LLM_API_URL) {
+    (async () => {
+      try {
+        // call the full enrichment path in background (disable fast to avoid recursion)
+        await analyzeWithLLM(report, { ...opts, fast: false });
+      } catch (e) {
+        console.warn('Async LLM enrichment failed', e && e.message ? e.message : e);
+      }
+    })();
+
+    return { local: true, analysis: deterministicAnalysis, asyncLLM: true, note: 'Deterministic analysis returned; LLM enrichment running in background' };
+  }
+
   // If explicitly requested, or if no external LLM configured, use local rule-based analysis (free/OSS)
   if (LLM_USE_LOCAL || !LLM_API_URL) {
     console.info('Using deterministic analysis (free/open-source). LLM_USE_LOCAL=', LLM_USE_LOCAL, 'LLM_API_URL=', !!LLM_API_URL);
@@ -751,8 +769,9 @@ async function analyzeWithLLM(report, opts = {}) {
       const parsedPath = path.join(artifactDir, `${baseName}-analysis-parsed.json`);
       const meta = { model: 'deterministic-analyzer-v2', timestamp: new Date().toISOString() };
       const out = { parsed: deterministicAnalysis, meta, validation: 'ok' };
-      fs.writeFileSync(parsedPath, JSON.stringify(out, null, 2));
+      await fs.promises.writeFile(parsedPath, JSON.stringify(out, null, 2));
       console.info('Wrote deterministic analysis to', parsedPath);
+      try { llmEvents.emit('parsed', { id: baseName, parsed: deterministicAnalysis }); } catch (e) { /* non-fatal */ }
     } catch (e) {
       console.warn('Failed to write deterministic analysis', e && e.message ? e.message : e);
     }
@@ -813,7 +832,7 @@ async function analyzeWithLLM(report, opts = {}) {
       bodyPayload = {
         model: modelName,
         messages: [ { role: 'user', content: prompt } ],
-        max_tokens: opts.maxTokens || 1024
+        max_tokens: opts.maxTokens || 512
       };
     } else if (isWebUIMode) {
       // text-generation-webui expects { model, input, max_new_tokens }
@@ -821,7 +840,7 @@ async function analyzeWithLLM(report, opts = {}) {
       bodyPayload = {
         model: modelName,
         input: prompt,
-        max_new_tokens: opts.maxTokens || 1024
+        max_new_tokens: opts.maxTokens || 512
       };
     } else if (isOllama) {
       // Ollama expects { model, prompt, max_tokens }
@@ -829,11 +848,11 @@ async function analyzeWithLLM(report, opts = {}) {
       bodyPayload = {
         model: modelName,
         prompt,
-        max_tokens: opts.maxTokens || 1024
+        max_tokens: opts.maxTokens || 512
       };
     } else {
       // Generic single-prompt format
-      bodyPayload = { prompt, max_tokens: opts.maxTokens || 1024 };
+      bodyPayload = { prompt, max_tokens: opts.maxTokens || 512 };
     }
     // Choose target URL: some routers expect the chat path
     let targetUrl = LLM_API_URL;
@@ -851,11 +870,15 @@ async function analyzeWithLLM(report, opts = {}) {
 
     const meta = { model: LLM_MODEL_NAME || opts.model || LLM_API_URL, timestamp: new Date().toISOString() };
 
+    // Reduce default retries and timeout to keep analysis fast by default
+    const llmTimeout = opts.timeoutMs || parseInt(process.env.LLM_TIMEOUT_MS || '5000', 10);
+    const llmRetries = typeof opts.retries === 'number' ? opts.retries : 1;
+
     const res = await fetchWithRetry(targetUrl, {
       method: 'POST',
       headers,
       body: JSON.stringify(bodyPayload)
-    }, 3, opts.timeoutMs || 20000);
+    }, llmRetries, llmTimeout);
 
     if (!res.ok) {
       const text = await res.text();
@@ -867,7 +890,7 @@ async function analyzeWithLLM(report, opts = {}) {
         const baseName = (report && (report.id || (report.reportPath && path.basename(report.reportPath).replace(/-report.json$/,'')))) || 'analysis';
         const parsedPath = path.join(artifactDir, `${baseName}-analysis-parsed.json`);
         const out = { parsed: null, meta, fetchStatus: res.status, fetchBody: text };
-        fs.writeFileSync(parsedPath, JSON.stringify(out, null, 2));
+        await fs.promises.writeFile(parsedPath, JSON.stringify(out, null, 2));
         console.info('Wrote LLM fetch-failure note to', parsedPath);
       } catch (e) {
         console.warn('Failed to write LLM fetch-failure note', e && e.message ? e.message : e);
@@ -1085,7 +1108,7 @@ async function analyzeWithLLM(report, opts = {}) {
         try {
           const diagPath = path.join(artifactDir, `${baseName}-analysis-diagnostic.json`);
           const diag = { meta, fetchBody: body, text: (typeof text === 'string' ? text.slice(0, 32000) : text), parseError: parseError || null, hint: 'LLM output was sparse or unparseable; using deterministic enrichment.' };
-          fs.writeFileSync(diagPath, JSON.stringify(diag, null, 2));
+          await fs.promises.writeFile(diagPath, JSON.stringify(diag, null, 2));
           console.info('Wrote LLM diagnostic file to', diagPath);
         } catch (diagErr) {
           // non-fatal
@@ -1093,8 +1116,17 @@ async function analyzeWithLLM(report, opts = {}) {
       }
 
       try {
-        fs.writeFileSync(parsedPath, JSON.stringify(out, null, 2));
+        await fs.promises.writeFile(parsedPath, JSON.stringify(out, null, 2));
         console.info('Wrote enriched analysis to', parsedPath, 'validation=', validation);
+
+        // Notify any listeners (SSE/WebSocket) that the LLM-enriched analysis is ready
+        try {
+          const parsedPayload = out.parsed || out;
+          // baseName is in scope where parsedPath was created
+          llmEvents.emit('parsed', { id: baseName, parsed: parsedPayload });
+        } catch (emitErr) {
+          /* non-fatal */
+        }
       } catch (writeErr) {
         console.warn('Failed to write enriched analysis to', parsedPath, writeErr && writeErr.message ? writeErr.message : writeErr);
       }
@@ -1111,4 +1143,4 @@ async function analyzeWithLLM(report, opts = {}) {
   }
 }
 
-module.exports = { analyzeWithLLM };
+module.exports = { analyzeWithLLM, llmEvents };

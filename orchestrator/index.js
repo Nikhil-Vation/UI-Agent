@@ -30,11 +30,12 @@ app.post('/run', async (req, res) => {
 
   try {
     const result = await runner.runTests({ url, breakpoints, artifactDir: ARTIFACT_DIR });
-    // Run local/remote LLM analysis (free local fallback if no external LLM configured)
-    const analysis = await llm.analyzeWithLLM(result).catch(err => ({ error: String(err) }));
-    // persist analysis
+    // Run deterministic analysis immediately and run remote LLM enrichment asynchronously by default.
+    // Set LLM_BLOCKING=true to wait for the remote LLM (slower).
+    const analysis = await llm.analyzeWithLLM(result, { fast: !(process.env.LLM_BLOCKING === 'true') }).catch(err => ({ error: String(err) }));
+    // persist analysis (async write to avoid blocking request thread)
     const analysisPath = path.join(ARTIFACT_DIR, `${result.id}-analysis.json`);
-    try { fs.writeFileSync(analysisPath, JSON.stringify(analysis, null, 2)); result.analysisPath = analysisPath; } catch (e) { console.warn('Failed to write analysis', e); }
+    try { await fs.promises.writeFile(analysisPath, JSON.stringify(analysis, null, 2)); result.analysisPath = analysisPath; } catch (e) { console.warn('Failed to write analysis', e); }
 
     // Build public artifact URLs (served under /artifacts)
     const host = `${req.protocol}://${req.get('host')}`;
@@ -125,6 +126,82 @@ app.get('/meta', async (req, res) => {
     res.json({ title, description, favicon });
   } catch (err) {
     res.status(500).json({ error: String(err) });
+  }
+});
+
+// Server-Sent Events (SSE) — push enriched LLM analysis to clients without polling
+// Clients connect to: GET /events?id=<reportId>
+const sseClients = new Map(); // reportId -> Set<res>
+
+app.get('/events', (req, res) => {
+  const id = req.query.id;
+  if (!id) return res.status(400).json({ error: 'Missing id query param' });
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+    'Access-Control-Allow-Origin': '*'
+  });
+  // initial comment to establish the stream
+  res.write(`: connected\n\n`);
+
+  const clients = sseClients.get(id) || new Set();
+  clients.add(res);
+  sseClients.set(id, clients);
+
+  // heartbeat to keep intermediate proxies happy
+  const keepalive = setInterval(() => {
+    try { res.write(': keepalive\n\n'); } catch (e) { /* ignore */ }
+  }, 20000);
+
+  req.on('close', () => {
+    clearInterval(keepalive);
+    const set = sseClients.get(id);
+    if (set) { set.delete(res); if (set.size === 0) sseClients.delete(id); }
+  });
+});
+
+// Listen for LLM parsed events and push to connected SSE clients
+if (llm && llm.llmEvents && typeof llm.llmEvents.on === 'function') {
+  llm.llmEvents.on('parsed', ({ id, parsed }) => {
+    const set = sseClients.get(id);
+    if (!set || set.size === 0) return;
+    const payload = JSON.stringify({ status: 'ready', enriched: true, parsed });
+    for (const res of set) {
+      try {
+        res.write(`data: ${payload}\n\n`);
+        res.end();
+      } catch (e) { /* ignore send errors */ }
+    }
+    sseClients.delete(id);
+  });
+}
+
+// Hybrid support: return LLM-enriched analysis when available for a given report id.
+app.get('/analysis/:id', async (req, res) => {
+  const id = req.params.id;
+  if (!id) return res.status(400).json({ error: 'Missing id param' });
+  try {
+    const parsedPath = path.join(ARTIFACT_DIR, `${id}-analysis-parsed.json`);
+    const analysisPath = path.join(ARTIFACT_DIR, `${id}-analysis.json`);
+
+    if (fs.existsSync(parsedPath)) {
+      const raw = await fs.promises.readFile(parsedPath, 'utf8');
+      const obj = JSON.parse(raw || '{}');
+      // obj may be { parsed: <analysis>, meta... }
+      return res.json({ status: 'ready', enriched: true, parsed: obj.parsed || obj });
+    }
+
+    if (fs.existsSync(analysisPath)) {
+      const raw = await fs.promises.readFile(analysisPath, 'utf8');
+      const obj = JSON.parse(raw || '{}');
+      return res.json({ status: 'processing', enriched: false, analysis: obj });
+    }
+
+    return res.status(404).json({ error: 'Analysis not found' });
+  } catch (err) {
+    return res.status(500).json({ error: String(err) });
   }
 });
 
