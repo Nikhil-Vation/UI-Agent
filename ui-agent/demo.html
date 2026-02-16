@@ -77,7 +77,20 @@
             </div>
             
             <!-- Screenshots Gallery - positioned at top of results -->
-            <div id="gallery" class="gallery"></div>
+            <div class="gallery-box" aria-label="Screenshots gallery">
+              <div id="gallery" class="gallery" aria-live="polite" role="list"></div>
+            </div>
+            
+            <!-- Screenshot preview modal (click thumbnail to open full-size, scrollable preview) -->
+            <div id="screenshotModal" class="screenshot-modal-overlay hidden" role="dialog" aria-modal="true" aria-label="Screenshot preview" onclick="if(event.target===this) closeScreenshotModal()">
+              <div class="screenshot-modal">
+                <button class="screenshot-modal-close" aria-label="Close screenshot" onclick="closeScreenshotModal()">&times;</button>
+                <div class="screenshot-modal-body" tabindex="0">
+                  <img id="screenshotModalImg" src="" alt="Full-size screenshot" />
+                </div>
+                <div class="screenshot-modal-caption" id="screenshotModalCaption"></div>
+              </div>
+            </div>
             
             <!-- Accessibility Checklist -->
             <div id="accessibilityChecklist" class="a11y-checklist hidden">
@@ -448,6 +461,7 @@
             if (e.key === 'Escape') {
               window.closeFixModal();
               window.closeIssuesListModal();
+              window.closeScreenshotModal && window.closeScreenshotModal();
             }
           });
           document.getElementById('fixModal')?.addEventListener('click', (e) => {
@@ -513,7 +527,60 @@
           }
 
           function clearGallery(){ document.getElementById('gallery').innerHTML = ''; }
-          function addThumb(url){ const g = document.getElementById('gallery'); const d = document.createElement('div'); d.className='thumb card'; d.innerHTML = `<img src="${url}" alt="screenshot" />`; g.appendChild(d); }
+
+          function openScreenshot(src, caption){
+            try{
+              const modal = document.getElementById('screenshotModal');
+              const img = document.getElementById('screenshotModalImg');
+              const cap = document.getElementById('screenshotModalCaption');
+              if(!modal || !img) return;
+              img.src = src || '';
+              cap.textContent = caption || '';
+
+              // show modal and ensure scroll starts at the top so image top isn't cropped
+              modal.classList.remove('hidden');
+              document.body.style.overflow = 'hidden';
+
+              setTimeout(()=>{
+                const bodyEl = modal.querySelector('.screenshot-modal-body');
+                if(bodyEl){
+                  bodyEl.scrollTop = 0;
+                  bodyEl.scrollLeft = 0;
+                  bodyEl.focus();
+                }
+              }, 50);
+            }catch(e){ console.warn('openScreenshot failed', e); }
+          }
+
+          function closeScreenshotModal(){
+            const modal = document.getElementById('screenshotModal');
+            if(!modal) return;
+            modal.classList.add('hidden');
+            document.body.style.overflow = '';
+            const img = document.getElementById('screenshotModalImg'); if(img) img.src = '';
+          }
+
+          // expose to global so inline onclick (× button) and other global handlers can call these
+          window.openScreenshot = openScreenshot;
+          window.closeScreenshotModal = closeScreenshotModal;
+
+          function addThumb(url){
+            const g = document.getElementById('gallery');
+            const d = document.createElement('div');
+            d.className = 'thumb card';
+            d.tabIndex = 0;
+            d.setAttribute('role','button');
+            d.setAttribute('aria-label','Open screenshot preview');
+            const img = document.createElement('img');
+            img.src = url;
+            img.alt = 'screenshot';
+            img.loading = 'lazy';
+            img.decoding = 'async';
+            d.appendChild(img);
+            d.addEventListener('click', () => openScreenshot(url));
+            d.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); openScreenshot(url); } });
+            g.appendChild(d);
+          }
 
           // Wrap run logic in a named handler so we can attach it and fall back to delegated handling
           const runHandler = async () => {
