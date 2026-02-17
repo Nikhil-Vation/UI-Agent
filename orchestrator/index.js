@@ -25,7 +25,42 @@ if (!fs.existsSync(ARTIFACT_DIR)) fs.mkdirSync(ARTIFACT_DIR, { recursive: true }
 app.use('/artifacts', express.static(ARTIFACT_DIR));
 
 app.post('/run', async (req, res) => {
-  const { url, breakpoints } = req.body || {};
+  // Accept two invocation styles:
+  // 1) legacy/orchestrator: { url, breakpoints } -> run Playwright tests (unchanged)
+  // 2) extension upload: { url, deterministic, axe } -> validate, log, return summary
+  const { url, breakpoints, deterministic, axe } = req.body || {};
+
+  // If the request looks like an extension upload (deterministic/axe present) handle it here
+  if (deterministic || axe) {
+    // Validation
+    if (!url) return res.status(400).json({ error: 'Missing url in body' });
+    if (!deterministic) return res.status(400).json({ error: 'Missing deterministic in body' });
+    if (!axe) return res.status(400).json({ error: 'Missing axe in body' });
+
+    // Log the received payload structure for debugging (do not log full content to avoid huge output)
+    try {
+      console.log('[POST /run] received extension payload', {
+        url: String(url).slice(0, 200),
+        deterministicKeys: Object.keys(typeof deterministic === 'object' && deterministic ? deterministic : {}).slice(0, 10),
+        axeSummary: { violations: Array.isArray(axe.violations) ? axe.violations.length : 0 }
+      });
+    } catch (e) { console.warn('[POST /run] logging payload failed', e); }
+
+    // Build summary
+    const totalAccessibilityIssues = Array.isArray(axe.violations) ? axe.violations.length : 0;
+    let totalUiIssues = 0;
+    try {
+      const h = deterministic.heuristics || {};
+      totalUiIssues = (Array.isArray(h.tapTargets) ? h.tapTargets.length : 0)
+        + (Array.isArray(h.headingOrder) ? h.headingOrder.length : 0)
+        + (Array.isArray(h.unlabeledInputs) ? h.unlabeledInputs.length : 0);
+    } catch (e) { totalUiIssues = 0; }
+
+    // Return lightweight acknowledgement and summary (keep response small and deterministic)
+    return res.json({ success: true, summary: { totalAccessibilityIssues, totalUiIssues } });
+  }
+
+  // Legacy/orchestrator flow — keep existing behavior
   if (!url) return res.status(400).json({ error: 'Missing url in body' });
 
   try {

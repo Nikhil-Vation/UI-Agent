@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>UI-Agent — Accessibility & UI Audit</title>
+    <link rel="stylesheet" href="../styles/popup.css">
+  </head>
+  <body>
+    <div id="app" class="app dark">
+      <header class="header">
+        <div>
+          <div class="title">UI-Agent</div>
+          <div class="subtitle" id="toolSubtitle">Accessibility & UI Audit</div>
+        </div>
+        <div class="score-card">
+          <div class="score-value" id="scoreValue">100</div>
+          <div class="score-label">Score</div>
+        </div>
+      </header>
+
+      <div class="controls">
+        <button id="runBtn" class="btn primary" aria-live="polite">Run quick scan</button>
+        <button id="showMoreBtn" class="btn" title="Show more issues">Show More Issues</button>
+        <div id="spinner" class="spinner" aria-hidden="true"></div>
+        <div id="status" class="status" role="status">Idle</div>
+      </div>
+
+      <section class="summary-card sticky">
+        <div class="summary-left">
+          <div class="meta small">Scanned URL</div>
+          <div class="meta"><strong id="scanUrl">—</strong></div>
+          <div class="meta small" id="scanTime">—</div>
+        </div>
+        <div class="summary-right">
+          <div class="card small-card">
+            <div class="card-title">Accessibility</div>
+            <div class="card-value" id="accessCount">0</div>
+          </div>
+          <div class="card small-card">
+            <div class="card-title">UI Issues</div>
+            <div class="card-value" id="uiCount">0</div>
+          </div>
+        </div>
+      </section>
+
+      <main class="main">
+        <section class="section checklist-section">
+          <div class="section-header">
+            <div class="section-title">Accessibility checklist</div>
+            <div class="section-sub">Quick health overview</div>
+          </div>
+          <div id="checklistGrid" class="checklist-grid" role="list"></div>
+        </section>
+
+        <section class="section" id="accessSection">
+          <button class="section-toggle" data-section="access" aria-expanded="true">Accessibility Issues <span id="accessToggleCount" class="badge badge--info">0</span></button>
+          <div class="issues-container expanded" id="accessContainer" role="region" aria-labelledby="accessSection">
+            <div id="accessList" class="issues-list"></div>
+            <div id="accessEmpty" class="empty">No accessibility issues found 🎉</div>
+          </div>
+        </section>
+
+        <section class="section" id="uiSection">
+          <button class="section-toggle" data-section="ui" aria-expanded="true">Deterministic UI Issues <span id="uiToggleCount" class="badge badge--info">0</span></button>
+          <div class="issues-container expanded" id="uiContainer" role="region" aria-labelledby="uiSection">
+            <div id="uiList" class="issues-list"></div>
+            <div id="uiEmpty" class="empty">No UI issues found 🎉</div>
+          </div>
+        </section>
+
+        <section class="section priorities">
+          <div class="section-header">
+            <div class="section-title">Top priority fixes</div>
+            <div class="section-sub">Start here</div>
+          </div>
+          <div id="topPriorityList" class="issues-list small-list"></div>
+        </section>
+
+        <section class="section recommendations">
+          <div class="section-header">
+            <div class="section-title">Recommendations & Action Plan</div>
+            <div class="section-sub">Guidance to fix the most important issues</div>
+          </div>
+          <div id="recommendationsList" class="issues-list small-list"></div>
+          <div id="actionPlanList" class="issues-list small-list"></div>
+        </section>
+
+        <section class="section best-practices">
+          <div class="section-header">
+            <div class="section-title">Best practices</div>
+            <div class="section-sub">Design for accessibility</div>
+          </div>
+          <div class="best-practices-grid">
+            <div class="bp-card"><strong>Use semantic HTML</strong><div class="bp-desc">Prefer natural HTML elements for accessibility and keyboard support.</div></div>
+            <div class="bp-card"><strong>Keyboard first</strong><div class="bp-desc">Ensure all interactive elements are reachable and operable via keyboard.</div></div>
+            <div class="bp-card"><strong>Descriptive labels</strong><div class="bp-desc">Provide meaningful labels for inputs, buttons and links.</div></div>
+          </div>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <small>Deterministic results shown immediately — LLM enrichment incoming.</small>
+      </footer>
+    </div>
+
+    <!-- Full-screen modal for issue details / full issue list -->
+    <div id="modalOverlay" class="modal-overlay" hidden>
+      <div id="modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+        <header class="modal-header">
+          <div>
+            <div id="modalTitle" class="modal-title">Issue details</div>
+            <div id="modalSub" class="modal-sub">Expanded view — click any issue for details</div>
+          </div>
+          <div>
+            <button id="modalClose" class="btn" aria-label="Close">Close</button>
+          </div>
+        </header>
+        <div id="modalBody" class="modal-body"></div>
+      </div>
+    </div>
+
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

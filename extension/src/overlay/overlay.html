@@ -1,0 +1,114 @@
+<!-- Command Center Overlay UI for UI-Agent -->
+<div id="ui-agent-command-center" class="ui-agent-overlay" role="main" aria-label="UI-Agent Command Center">
+  <!-- Header Bar -->
+  <header class="overlay-header">
+    <div class="header-title">
+      <span class="header-icon">⚡</span>
+      <span class="header-text">UI-Agent Command Center</span>
+    </div>
+    <div class="header-actions">
+      <button id="overlay-minimize" class="header-btn" aria-label="Minimize overlay" title="Minimize">
+        <span>−</span>
+      </button>
+      <button id="overlay-close" class="header-btn" aria-label="Close overlay" title="Close">
+        <span>✕</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Grid: Left | Center | Right -->
+  <div class="overlay-main">
+    <!-- LEFT SIDEBAR: Audit Navigator -->
+    <aside class="overlay-sidebar overlay-sidebar-left" role="complementary" aria-label="Audit navigator">
+      <!-- Global Score Gauge -->
+      <div class="score-section">
+        <div class="score-gauge-container">
+          <svg class="score-gauge" viewBox="0 0 120 120" aria-hidden="true">
+            <defs>
+              <linearGradient id="gauge-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stop-color="#10b981" />
+                <stop offset="60%" stop-color="#60a5fa" />
+                <stop offset="100%" stop-color="#f59e0b" />
+              </linearGradient>
+            </defs>
+            <circle cx="60" cy="60" r="55" class="gauge-bg"></circle>
+            <circle cx="60" cy="60" r="55" class="gauge-fill" style="--score: 0;"></circle>
+            <text x="60" y="65" class="gauge-text" id="score-text">—</text>
+          </svg>
+        </div>
+        <div class="score-label">Health Score</div>
+      </div>
+
+      <!-- Category Filters -->
+      <div class="filters-section">
+        <div class="filters-title">Filters</div>
+        <button class="filter-btn active" data-filter="accessibility" aria-pressed="true">
+          <span class="filter-icon">a11y</span>
+          <span class="filter-label">Accessibility</span>
+        </button>
+        <button class="filter-btn active" data-filter="ui" aria-pressed="true">
+          <span class="filter-icon">◊</span>
+          <span class="filter-label">UI Heuristics</span>
+        </button>
+        <button class="filter-btn active" data-filter="enrichment" aria-pressed="true">
+          <span class="filter-icon">✧</span>
+          <span class="filter-label">AI Enrichment</span>
+        </button>
+      </div>
+
+      <!-- Checklist -->
+      <div class="checklist-section">
+        <div class="checklist-title">Checklist</div>
+        <div id="overlay-checklist" class="checklist-list" role="list"></div>
+      </div>
+
+      <!-- Scan Status -->
+      <div class="scan-status-section">
+        <div id="overlay-scan-status" class="scan-status">Idle</div>
+      </div>
+    </aside>
+
+    <!-- CENTER PANEL: Issue Deep-Dive -->
+    <main class="overlay-center" role="main" aria-label="Issue details">
+      <div id="overlay-center-content" class="center-content"></div>
+      <div id="overlay-empty-state" class="empty-state" hidden>
+        <div class="empty-icon">🎉</div>
+        <div class="empty-text">No issues detected — site looks great!</div>
+      </div>
+    </main>
+
+    <!-- RIGHT SIDEBAR: Action Plan -->
+    <aside class="overlay-sidebar overlay-sidebar-right" role="complementary" aria-label="Action plan">
+      <!-- Top Priority Fixes -->
+      <div class="priority-section">
+        <div class="priority-title">Top Priorities</div>
+        <div id="overlay-priorities" class="priority-list" role="list"></div>
+      </div>
+
+      <!-- Export / Report -->
+      <div class="export-section">
+        <div class="export-title">Export</div>
+        <button id="overlay-export-json" class="export-btn" aria-label="Download JSON report">
+          <span class="btn-icon">📥</span>
+          <span class="btn-label">JSON Report</span>
+        </button>
+        <button id="overlay-export-copy" class="export-btn" aria-label="Copy summary to clipboard">
+          <span class="btn-icon">📋</span>
+          <span class="btn-label">Copy Summary</span>
+        </button>
+      </div>
+
+      <!-- Metadata -->
+      <div class="metadata-section">
+        <div class="metadata-item">
+          <span class="metadata-label">URL:</span>
+          <span id="overlay-url" class="metadata-value"></span>
+        </div>
+        <div class="metadata-item">
+          <span class="metadata-label">Scanned:</span>
+          <span id="overlay-timestamp" class="metadata-value"></span>
+        </div>
+      </div>
+    </aside>
+  </div>
+</div>

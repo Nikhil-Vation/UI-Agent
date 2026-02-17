@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "UI-Agent - Accessibility Quick Scan",
+  "version": "0.1.0",
+  "description": "Deterministic (axe) scan in-page with backend LLM enrichment (SSE).",
+  "action": {
+    "default_popup": "src/ui/popup.html",
+    "default_title": "UI-Agent A11y Scan"
+  },
+  "permissions": [
+    "scripting",
+    "activeTab",
+    "storage"
+  ],
+  "host_permissions": [
+    "http://localhost:3000/*"
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "src/content/axe.min.js",
+        "src/content/axe-core.min.js"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ],
+  "background": {
+    "service_worker": "src/background/service-worker.js"
+  }
+}

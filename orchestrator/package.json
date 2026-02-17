@@ -4,7 +4,8 @@
   "description": "POC orchestrator for AI-powered UI and accessibility testing",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "copy-axe-to-extension": "node scripts/copy-axe-to-extension.js"
   },
   "dependencies": {
     "axe-core": "^4.8.0",
