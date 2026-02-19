@@ -1,4 +1,4 @@
-# Vation Agent Chrome Extension
+# Accea Agent Chrome Extension
 
 > **The only accessibility tool that generates working code fixes privately on your machine.**
 
@@ -16,7 +16,7 @@ Page Data ──▶ axe-core scan (in-browser, private)
     │               │                   │
     ▼               ▼                   ▼
 window.ai       localhost           Cloud API
-(Gemini Nano)   (Ollama)            (redacted)
+(On-device)     (Local LLM)         (redacted)
 🔒 Private      🔒 Private         ☁️ Redacted
     │               │                   │
     └───────────────┼───────────────────┘
@@ -32,7 +32,7 @@ window.ai       localhost           Cloud API
 - **One-click scanning** — Click the extension icon → "Scan This Page"
 - **Issue highlighting** — Violations are outlined directly on the page with color-coded severity
 - **AI-powered fixes** — Click "Fix it ✨" on any issue to get a working code patch
-- **Cascading LLM** — Tries private options first (window.ai → Ollama), falls back to cloud only if opted in
+- **Cascading LLM** — Tries private options first (on-device AI → local LLM), falls back to cloud only if opted in
 - **Data redaction** — PII, cookies, form values, and text content are stripped before any cloud calls
 - **WCAG scoring** — Compliance score with severity breakdown
 - **Scan history** — Track accessibility improvements over time
@@ -67,8 +67,8 @@ For AI-powered fixes without any cloud dependency:
 # Start the orchestrator (from project root)
 cd orchestrator && npm start
 
-# Make sure Ollama is running
-ollama serve
+# Make sure your local LLM backend is running
+# (e.g. start your preferred model server)
 ```
 
 The extension will auto-detect the local server at `http://localhost:3000`.
@@ -110,8 +110,8 @@ chrome-extension/
 
 | Backend | Privacy | Speed | Quality | Requirements |
 |---------|---------|-------|---------|-------------|
-| **window.ai** (Gemini Nano) | 🔒 Full | ⚡ Fast | ★★★ | Chrome 127+ with AI features |
-| **Localhost** (Ollama) | 🔒 Full | 🔄 Medium | ★★★★ | Ollama + any model |
+| **On-device AI** | 🔒 Full | ⚡ Fast | ★★★ | Chrome 127+ with AI features |
+| **Local LLM** | 🔒 Full | 🔄 Medium | ★★★★ | Any compatible model server |
 | **Cloud API** | ☁️ Redacted | 🔄 Medium | ★★★★★ | Opt-in required |
 | **Deterministic** | 🔒 Full | ⚡ Instant | ★★ | Always available |
 
@@ -142,7 +142,7 @@ What's **kept** (needed for accurate fixes):
 | `activeTab` | Access the current tab to run scans |
 | `scripting` | Inject axe-core and scanner into pages |
 | `storage` | Save settings and scan history locally |
-| `host_permissions: localhost:3000` | Connect to local Ollama server |
+| `host_permissions: localhost:3000` | Connect to local LLM server |
 
 ## License
 

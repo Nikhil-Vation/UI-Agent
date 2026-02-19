@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Vation Agent — Accessibility Scanner & Fixer",
+  "name": "Accea Agent — Accessibility Scanner & Fixer",
   "version": "1.0.0",
   "description": "Privacy-first accessibility scanner with AI-powered code fixes. Runs entirely in your browser — no data leaves your machine.",
   "permissions": [
@@ -9,10 +9,11 @@
     "storage"
   ],
   "host_permissions": [
-    "http://localhost:3000/*"
+    "http://localhost:3000/*",
+    "https://www.googleapis.com/pagespeedonline/*"
   ],
   "optional_host_permissions": [
-    "https://api.vation-agent.com/*"
+    "https://api.accea-agent.com/*"
   ],
   "action": {
     "default_popup": "popup/popup.html",

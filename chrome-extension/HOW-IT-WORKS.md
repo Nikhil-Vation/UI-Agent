@@ -1,6 +1,6 @@
-# Vation Agent — Under the Hood
+# Accea Agent — Under the Hood
 
-> A complete technical deep-dive into how Vation Agent works, why it was built this way, and what makes it different from everything else on the market.
+> A complete technical deep-dive into how Accea Agent works, why it was built this way, and what makes it different from everything else on the market.
 
 ---
 
@@ -52,7 +52,7 @@
 │  │                │      │                  │  │              │ │
 │  │ • Highlighting │      │ • PII stripping  │  │ • Cascade:   │ │
 │  │ • DOM context  │      │ • HTML redaction │  │   1. Nano    │ │
-│  │ • Scroll-to    │      │ • URL redaction  │  │   2. Ollama  │ │
+│  │ • Scroll-to    │      │ • URL redaction  │  │   2. Local   │ │
 │  └────────────────┘      └──────────────────┘  │   3. Cloud   │ │
 │                                                │   4. Rules   │ │
 │  ┌────────────────┐                            └──────┬───────┘ │
@@ -68,8 +68,8 @@
                      │          OPTIONAL / LOCAL                │
                      │                                         │
                      │  ┌──────────────────────────────────┐   │
-                     │  │  Ollama (localhost:3000)          │   │
-                     │  │  llama3.1:8b                      │   │
+                     │  │  Local LLM (localhost:3000)      │   │
+                     │  │  Configurable model              │   │
                      │  │  Orchestrator w/ Express           │   │
                      │  │  • POST /fix                       │   │
                      │  │  • GET  /health                    │   │
@@ -88,7 +88,7 @@
 | **Redactor** | Content script (ISOLATED) | `content/redactor.js` | PII stripping before any data leaves the browser |
 | **LLM Router** | Background (imported) | `lib/llm-router.js` | Cascading AI fix generation with 4-tier fallback |
 | **axe-core** | Page (MAIN world) | `lib/axe.min.js` | Industry-standard accessibility engine (Deque, v4.10.2) |
-| **Orchestrator** | Local server (Node.js) | `orchestrator/index.js` | Express API bridging the extension to Ollama LLM |
+| **Orchestrator** | Local server (Node.js) | `orchestrator/index.js` | Express API bridging the extension to the local LLM |
 
 ---
 
@@ -222,18 +222,18 @@ User clicks "Fix it" on an issue card
    ┌─────────────────────┐
    │  llm-router.js      │  CASCADING FALLBACK
    │                     │
-   │  Tier 1: window.ai (Gemini Nano)
+   │  Tier 1: window.ai (On-device AI)
    │  └─ Chrome's built-in on-device LLM
    │  └─ FREE, instant, 100% private
    │  └─ If available → use it, done.
    │
-   │  Tier 2: Ollama (localhost:3000)
+   │  Tier 2: Local LLM (localhost:3000)
    │  └─ Local LLM via orchestrator
-   │  └─ llama3.1:8b model
+   │  └─ Configurable model
    │  └─ FREE, local, 100% private
    │  └─ Checks /health first
    │
-   │  Tier 3: Cloud API (api.vation-agent.com)
+   │  Tier 3: Cloud API (api.accea-agent.com)
    │  └─ Remote LLM endpoint
    │  └─ Data is PII-REDACTED before sending
    │  └─ Only used if Tier 1+2 fail
@@ -311,8 +311,8 @@ RESPOND AS JSON ONLY:
 
 | Tier | Backend | Cost | Privacy | Latency | When Used |
 |------|---------|------|---------|---------|-----------|
-| 1 | Gemini Nano (`window.ai`) | Free | 100% on-device | ~1–3s | Chrome ≥127 with AI flag enabled |
-| 2 | Ollama (localhost) | Free | 100% local | ~3–15s | Ollama running with llama3.1:8b |
+| 1 | On-device AI (`window.ai`) | Free | 100% on-device | ~1–3s | Chrome ≥127 with AI flag enabled |
+| 2 | Local LLM (localhost) | Free | 100% local | ~3–15s | Any compatible model server running |
 | 3 | Cloud API | Paid | PII-redacted first | ~2–5s | Tiers 1+2 unavailable |
 | 4 | Deterministic Rules | Free | N/A | Instant | All AI backends fail / unknown rule |
 
@@ -342,8 +342,8 @@ Here's why that's true:
 | Issue highlighting | Content script | ❌ No |
 | History storage | chrome.storage.local | ❌ No |
 | Export (JSON/CSV/HTML/PDF) | Popup script | ❌ No |
-| Fix — Gemini Nano | On-device LLM | ❌ No |
-| Fix — Ollama | localhost:3000 | ❌ No (localhost) |
+| Fix — On-device AI | On-device LLM | ❌ No |
+| Fix — Local LLM | localhost:3000 | ❌ No (localhost) |
 | Fix — Cloud API | Remote server | ⚠️ Yes — but PII-redacted |
 | Fix — Deterministic | In-memory rules | ❌ No |
 
@@ -351,8 +351,8 @@ Here's why that's true:
 
 **Only when ALL of these are true simultaneously:**
 1. User clicks "Fix it" on an issue
-2. Gemini Nano is not available
-3. Ollama is not running locally
+2. On-device AI is not available
+3. Local LLM is not running
 4. Cloud API is enabled in settings
 5. Even then → data is PII-redacted before transmission
 
@@ -457,7 +457,7 @@ The redactor runs as a content script because:
 
 The HTML report is a **self-contained, standalone page**:
 - Full CSS embedded inline (no external dependencies)
-- Vation Agent branding and dark theme
+- Accea Agent branding and dark theme
 - Issue cards with severity badges
 - Score ring visualization
 - Metadata (URL, timestamp, scan duration)
@@ -488,8 +488,8 @@ PDF uses the browser's native print engine:
 
 | Permission | Type | Why |
 |------------|------|-----|
-| `http://localhost:3000/*` | Required | Talk to local Ollama orchestrator for AI fixes |
-| `https://api.vation-agent.com/*` | **Optional** | Cloud AI fallback — user must explicitly enable |
+| `http://localhost:3000/*` | Required | Talk to local LLM orchestrator for AI fixes |
+| `https://api.accea-agent.com/*` | **Optional** | Cloud AI fallback — user must explicitly enable |
 
 ### Permissions We Do NOT Request
 
@@ -523,7 +523,7 @@ PDF uses the browser's native print engine:
 |---|----------|--------|
 | 6 | **How does data remain within the browser?** | All scanning (axe-core), scoring (algorithm), highlighting (CSS), history (chrome.storage.local), and exports (data URLs) run entirely in-browser. No server needed for core functionality. |
 | 7 | **Is scan data sent anywhere?** | Never. Scan results live in the service worker's memory and chrome.storage.local. They're never transmitted. |
-| 8 | **What about the AI fixes?** | By default, fixes use on-device AI (Gemini Nano) or local Ollama — both 100% private. Cloud is opt-in and PII-redacted. |
+| 8 | **What about the AI fixes?** | By default, fixes use on-device AI or a local LLM — both 100% private. Cloud is opt-in and PII-redacted. |
 | 9 | **Can my company use this on internal apps?** | Yes. Since scanning is entirely local, it's safe for intranet, staging, and pre-production environments. No data leaks to third parties. |
 | 10 | **Is it GDPR / SOC2 compliant?** | By design, yes. No personal data collection, no data transmission (default mode), no cookies, no user tracking. No data processor agreement needed since no data is processed externally. |
 
@@ -535,7 +535,7 @@ PDF uses the browser's native print engine:
 | 12 | **Does the LLM scan the page?** | No. Scanning is 100% axe-core (deterministic, rule-based). The LLM only processes individual issues when user requests a fix. |
 | 13 | **Can it work without any AI?** | Yes. Scanning works perfectly. Fixes fall back to deterministic rules (Tier 4) for the 9 most common issues. |
 | 14 | **Is the AI response always correct?** | No AI is perfect. That's why we show a confidence score (0.0–1.0) and include before/after code for human review. The fix is a suggestion, not auto-applied. |
-| 15 | **Which LLM model is used?** | Depends on the tier: Gemini Nano (on-device), llama3.1:8b (Ollama), or cloud model. User can configure in settings. |
+| 15 | **Which LLM model is used?** | Depends on the tier: on-device AI, local LLM, or cloud model. The specific model is configurable. |
 
 ### 📊 Reports
 
@@ -552,19 +552,19 @@ PDF uses the browser's native print engine:
 | 19 | **Why a Chrome Extension and not a web app?** | Extensions can inject scripts into any page (MAIN world), access the real DOM, and run locally. A web app can't scan third-party sites due to CORS/same-origin restrictions. |
 | 20 | **Why Manifest V3?** | MV3 is Google's current standard. Service workers (vs background pages) use less memory, can't persist state secretly, and align with Chrome's security model. |
 | 21 | **Why axe-core specifically?** | It's the industry standard (Deque Systems). Used by Google Lighthouse, Microsoft Accessibility Insights, and thousands of enterprises. 90+ rules covering WCAG 2.0/2.1/2.2 A/AA/AAA. |
-| 22 | **Why not just use Lighthouse?** | Lighthouse is a full audit tool (performance, SEO, etc.) that runs in DevTools. Vation Agent is focused, real-time, and adds AI fixes — Lighthouse can't generate code patches. |
+| 22 | **Why not just use Lighthouse?** | Lighthouse is a full audit tool (performance, SEO, etc.) that runs in DevTools. Accea Agent is focused, real-time, and adds AI fixes — Lighthouse can't generate code patches. |
 
 ---
 
 ## 10. Competitive Differentiation
 
-### Vation Agent vs. Existing Tools
+### Accea Agent vs. Existing Tools
 
-| Feature | Vation Agent | axe DevTools | WAVE | Lighthouse | Accessibility Insights |
+| Feature | Accea Agent | axe DevTools | WAVE | Lighthouse | Accessibility Insights |
 |---------|:------------:|:------------:|:----:|:----------:|:---------------------:|
 | **AI Code Fixes** | ✅ LLM-generated patches | ❌ | ❌ | ❌ | ❌ |
 | **Privacy-First (no data leaves)** | ✅ Default mode | ⚠️ Cloud features | ⚠️ Cloud service | ✅ Local | ✅ Local |
-| **On-Device AI** | ✅ Gemini Nano | ❌ | ❌ | ❌ | ❌ |
+| **On-Device AI** | ✅ On-device LLM | ❌ | ❌ | ❌ | ❌ |
 | **Cascading LLM Fallback** | ✅ 4 tiers | ❌ | ❌ | ❌ | ❌ |
 | **PII Redaction Layer** | ✅ 7 pattern types | ❌ | ❌ | ❌ | ❌ |
 | **Real-Time Highlighting** | ✅ Severity-colored | ✅ | ✅ | ❌ | ✅ |
@@ -579,16 +579,16 @@ PDF uses the browser's native print engine:
 ### The 5 Selling Factors
 
 1. **🤖 AI-Powered Fixes, Not Just Reports**
-   Every other tool tells you *what's wrong*. Vation Agent tells you *how to fix it* — with working code. Click "Fix it" and get a copy-paste patch with explanation, confidence score, and effort estimate.
+   Every other tool tells you *what's wrong*. Accea Agent tells you *how to fix it* — with working code. Click "Fix it" and get a copy-paste patch with explanation, confidence score, and effort estimate.
 
 2. **🔒 Privacy-First Architecture**
-   Zero data transmission by default. On-device AI (Gemini Nano) + local LLM (Ollama) = enterprise-safe for internal apps, staging environments, and regulated industries (healthcare, finance, government).
+   Zero data transmission by default. On-device AI + local LLM = enterprise-safe for internal apps, staging environments, and regulated industries (healthcare, finance, government).
 
 3. **🛡️ PII Redaction — Defense in Depth**
    Even when cloud AI is used, a 7-pattern redaction engine strips emails, SSNs, credit cards, API keys, JWTs, and more *before* any data leaves the browser. No other accessibility tool has this.
 
 4. **⚡ Graceful Degradation — Never Breaks**
-   4-tier fallback ensures fixes always work: Gemini Nano → Ollama → Cloud → Deterministic Rules. User never sees "service unavailable." The tool adapts to whatever infrastructure is available.
+   4-tier fallback ensures fixes always work: On-device AI → Local LLM → Cloud → Deterministic Rules. User never sees "service unavailable." The tool adapts to whatever infrastructure is available.
 
 5. **📊 Actionable, Not Overwhelming**
    Score ring with letter grade (not just a number), severity filtering, one-click Fix All for top issues, confetti on success, and 5 export formats. Designed for developers AND managers to understand.
@@ -612,7 +612,7 @@ PDF uses the browser's native print engine:
 
 ## 12. Limitations & Honest Trade-Offs
 
-### What Vation Agent Cannot Do
+### What Accea Agent Cannot Do
 
 | Limitation | Why | Workaround |
 |-----------|-----|------------|
@@ -620,8 +620,8 @@ PDF uses the browser's native print engine:
 | **Doesn't test keyboard navigation** | axe-core tests DOM state, not user interaction flows | Manual keyboard testing still required |
 | **Doesn't test screen reader behavior** | Can't run NVDA/JAWS/VoiceOver programmatically | Pair with manual screen reader testing |
 | **LLM fixes may be imperfect** | AI generates suggestions, not guaranteed-correct patches | Confidence score shown; human review required |
-| **Gemini Nano needs Chrome flags** | Still experimental (chrome://flags → #prompt-api-for-gemini-nano) | Falls back to Ollama or deterministic |
-| **Ollama needs local setup** | Must install Ollama + pull model + run orchestrator | Extension works without it (Tier 3/4 fallback) |
+| **On-device AI needs Chrome flags** | Still experimental (chrome://flags → #prompt-api-for-gemini-nano) | Falls back to local LLM or deterministic |
+| **Local LLM needs setup** | Must install a model server + run orchestrator | Extension works without it (Tier 3/4 fallback) |
 | **Cannot scan PDFs or iframes** | Browser security blocks cross-origin frame access | Scan embedded content separately |
 | **History limited to 200 entries** | Prevents unbounded storage growth | Export history before it rotates |
 
@@ -645,7 +645,7 @@ PDF uses the browser's native print engine:
 | **CSS3 (Custom Properties)** | — | UI styling | Glassmorphism, animations, `backdrop-filter`, `@keyframes` — no CSS framework needed |
 | **HTML5** | — | Popup structure | Semantic markup, data attributes for state management |
 | **Chrome APIs** | — | Platform integration | `chrome.scripting`, `chrome.storage`, `chrome.tabs`, `chrome.runtime`, `chrome.action` |
-| **Gemini Nano / window.ai** | Experimental | On-device LLM | Chrome's built-in AI — free, instant, 100% private |
+| **On-device AI / window.ai** | Experimental | On-device LLM | Chrome's built-in AI — free, instant, 100% private |
 
 ### Orchestrator (Backend)
 
@@ -653,8 +653,8 @@ PDF uses the browser's native print engine:
 |-----------|---------|------|------------|
 | **Node.js** | 18+ | Runtime | Universal, async-native, npm ecosystem |
 | **Express.js** | 4.x | HTTP server | Lightweight, battle-tested, minimal boilerplate |
-| **Ollama** | Latest | Local LLM host | Run open-source models locally with one command. Free. |
-| **llama3.1:8b** | 8B params | LLM model | Best quality-to-speed ratio at 8B params. Runs on 8GB RAM. |
+| **Local LLM Server** | Latest | Local LLM host | Run open-source models locally. Configurable. Free. |
+| **LLM Model** | Configurable | LLM model | User chooses model based on hardware and quality needs. |
 | **Playwright** | Latest | Browser automation | Headless scanning, screenshots, multi-viewport testing |
 | **dotenv** | — | Environment config | Keep secrets out of code |
 | **body-parser** | — | Request parsing | Handle JSON payloads up to 10MB |
@@ -704,11 +704,11 @@ This section maps every major component to its downstream effects. Useful for pl
 
 | If You Change... | It Affects... | Effort | Risk |
 |-----------------|--------------|--------|------|
-| **Swap Ollama model** (e.g., llama3.1 → mistral) | Fix quality changes, may need prompt tuning, response format may differ | S | Low — just change model name in `.env` |
+| **Swap LLM model** (e.g., switch to a different model) | Fix quality changes, may need prompt tuning, response format may differ | S | Low — just change model name in `.env` |
 | **Add GPT-4o / Claude as cloud tier** | Better fix quality, need API key management, cost implications | M | Low — add new `_fixWithOpenAI()` method in llm-router |
 | **Remove cloud tier entirely** | Simpler, more private, but no fallback if local AI is down | S | Low — just remove Tier 3 from cascade |
 | **Fine-tune a model on a11y fixes** | Much better fix accuracy, need training data (~500 examples), hosting | L | Medium — model may overfit on specific patterns |
-| **Upgrade Gemini Nano API** | `window.ai` API may change as it moves from experimental to stable | S | Medium — Google may change the API surface |
+| **Upgrade on-device AI API** | `window.ai` API may change as it moves from experimental to stable | S | Medium — Google may change the API surface |
 
 ### UI / Popup
 
@@ -761,17 +761,17 @@ This section maps every major component to its downstream effects. Useful for pl
 
 ## 15. Lighthouse & SEO Optimization Tips
 
-> Vation Agent focuses on **accessibility**, but accessibility improvements directly boost your **Lighthouse scores** and **SEO rankings**. Here's the full cross-over map.
+> Accea Agent focuses on **accessibility**, but accessibility improvements directly boost your **Lighthouse scores** and **SEO rankings**. Here's the full cross-over map.
 
 ### How Accessibility Fixes Improve Lighthouse Scores
 
-Lighthouse has 5 categories. Accessibility fixes from Vation Agent directly impact **3 of them**:
+Lighthouse has 5 categories. Accessibility fixes from Accea Agent directly impact **3 of them**:
 
 ```
 ┌─────────────────────────────────────────────────────┐
 │                LIGHTHOUSE SCORES                     │
 ├──────────────────┬──────────────────────────────────┤
-│ Category         │ Impact from Vation Agent Fixes    │
+│ Category         │ Impact from Accea Agent Fixes    │
 ├──────────────────┼──────────────────────────────────┤
 │ Accessibility    │ ████████████████████  DIRECT      │
 │ SEO              │ ████████████░░░░░░░░  HIGH        │
@@ -783,9 +783,9 @@ Lighthouse has 5 categories. Accessibility fixes from Vation Agent directly impa
 
 ### Accessibility Issues That Also Hurt Lighthouse SEO
 
-These Vation Agent findings **double as SEO fixes**. Fix them once, improve two scores:
+These Accea Agent findings **double as SEO fixes**. Fix them once, improve two scores:
 
-| Vation Agent Issue | Lighthouse A11y Impact | Lighthouse SEO Impact | Google Ranking Signal |
+| Accea Agent Issue | Lighthouse A11y Impact | Lighthouse SEO Impact | Google Ranking Signal |
 |-------------------|----------------------|---------------------|---------------------|
 | **`html-has-lang`** | ⬆️ Screen readers know the language | ⬆️ Search engines index correct language | ✅ Yes — affects hreflang/i18n |
 | **`document-title`** | ⬆️ Users identify the page | ⬆️ Title tag is #1 SEO ranking factor | ✅ Yes — appears in search results |
@@ -864,7 +864,7 @@ These Vation Agent findings **double as SEO fixes**. Fix them once, improve two 
 │  5. PAGE TITLE = #1 SEO Factor + Tab Identification             │
 │     ──────────────────────────────────────────────              │
 │     Pattern: "Primary Keyword - Secondary | Brand Name"         │
-│     Example: "Accessibility Scanner - AI Fixes | Vation Agent"  │
+│     Example: "Accessibility Scanner - AI Fixes | Accea Agent"  │
 │     → Appears in browser tab (a11y)                             │
 │     → Appears in Google search results (SEO)                    │
 │     → 50-60 characters max for full display                     │
@@ -896,17 +896,17 @@ These Vation Agent findings **double as SEO fixes**. Fix them once, improve two 
 
 ### Lighthouse Score Cheat Sheet
 
-| Category | What Lighthouse Checks | How Vation Agent Helps |
+| Category | What Lighthouse Checks | How Accea Agent Helps |
 |----------|----------------------|----------------------|
 | **Accessibility (25%)** | 50+ audits (names, labels, ARIA, contrast, focus, language) | Directly scans and fixes all of these |
 | **SEO (25%)** | Title, meta description, hreflang, robots, canonical, mobile viewport, crawlability, structured data | Fixes title, lang, viewport, alt text, heading structure, link text — covers ~40% of SEO audits |
 | **Best Practices (25%)** | HTTPS, no console errors, correct image aspect ratio, no deprecated APIs | Fixing ARIA errors reduces console warnings; proper img alt + dimensions help |
 | **Performance (25%)** | LCP, FID/INP, CLS, resource loading, render-blocking | Indirect — proper semantic HTML reduces reflows; lazy alt text loading helps LCP |
 
-### Vation Agent Score → Lighthouse Score Correlation
+### Accea Agent Score → Lighthouse Score Correlation
 
 ```
-Vation Agent Score    Estimated Lighthouse A11y Score
+Accea Agent Score    Estimated Lighthouse A11y Score
 ──────────────────    ─────────────────────────────────
      95-100           →  95-100  (Excellent)
      80-94            →  85-95   (Good, minor issues)
@@ -920,7 +920,7 @@ and checks a few things axe-core doesn't (e.g., tabindex > 0).
 
 ### 🏆 The "Perfect 100" Checklist
 
-Want a perfect Lighthouse Accessibility score? Fix everything Vation Agent finds, then verify these manually:
+Want a perfect Lighthouse Accessibility score? Fix everything Accea Agent finds, then verify these manually:
 
 - [ ] All images have descriptive `alt` text (not `alt=""` unless decorative)
 - [ ] `<html lang="en">` (or appropriate language code)
@@ -952,7 +952,7 @@ Want a perfect Lighthouse Accessibility score? Fix everything Vation Agent finds
 
 ## 16. Onboarding Intro & Typewriter Hero
 
-> First impressions matter. When a user installs Vation Agent and opens the popup for the first time, they see an **animated intro hero** that explains exactly what the extension does — then it **vanishes the moment they click Scan**.
+> First impressions matter. When a user installs Accea Agent and opens the popup for the first time, they see an **animated intro hero** that explains exactly what the extension does — then it **vanishes the moment they click Scan**.
 
 ### What the User Sees (Before First Scan)
 
@@ -967,7 +967,7 @@ Want a perfect Lighthouse Accessibility score? Fix everything Vation Agent finds
 │  Ready → Inclusive → WCAG Compliant →        │
 │  Privacy Safe → (loops)                      │
 │                                              │
-│  Vation Agent scans any webpage for WCAG     │
+│  Accea Agent scans any webpage for WCAG     │
 │  accessibility issues, gives you an instant  │
 │  score, and uses AI to generate code fixes   │
 │  — all while keeping your data 100% private. │
@@ -1055,7 +1055,7 @@ The intro **never comes back** — after scan, the score card, issues, tabs, and
 
 ## 17. Mobile Responsiveness & Lazy Loading
 
-> Vation Agent doesn't just **check** for accessibility — it actively advises on **mobile responsiveness** and **lazy loading**, two pillars of modern web performance that directly affect both user experience and search rankings.
+> Accea Agent doesn't just **check** for accessibility — it actively advises on **mobile responsiveness** and **lazy loading**, two pillars of modern web performance that directly affect both user experience and search rankings.
 
 ### Why We Cover These
 
@@ -1070,7 +1070,7 @@ The intro **never comes back** — after scan, the score card, issues, tabs, and
 │                     /   \                                      │
 │                    /     \                                     │
 │    Mobile ◄──────/───────\──────► Performance                  │
-│  Responsive     Vation    Lazy Loading                         │
+│  Responsive     Accea    Lazy Loading                          │
 │                 Agent                                          │
 │                                                                │
 │  All three are Google ranking signals.                         │
@@ -1080,7 +1080,7 @@ The intro **never comes back** — after scan, the score card, issues, tabs, and
 
 ### Mobile Responsiveness — What We Check & Advise
 
-| Check | Why It Matters | Vation Agent Advice |
+| Check | Why It Matters | Accea Agent Advice |
 |-------|---------------|--------------------|
 | **`meta-viewport`** blocks zoom | Users with low vision can't zoom → WCAG 1.4.4 failure | Remove `maximum-scale=1` and `user-scalable=no` |
 | **Touch targets < 44×44px** | Motor-impaired users can't tap small buttons | Increase padding/min-size to 44×44 CSS pixels |
@@ -1096,7 +1096,7 @@ The intro **never comes back** — after scan, the score card, issues, tabs, and
 2021: Mobile-first indexing for ALL sites
 2024: Mobile experience = THE experience for ranking
 
-Vation Agent's meta-viewport check directly addresses this.
+Accea Agent's meta-viewport check directly addresses this.
 ```
 
 ### Lazy Loading — What We Advise
@@ -1180,11 +1180,11 @@ These always display in the Tips → SEO Crossover section after scanning:
 
 ```
 ┌────────────────────────────────────────────┐
-│          VATION AGENT — QUICK REF          │
+│          ACCEA AGENT — QUICK REF          │
 ├────────────────────────────────────────────┤
 │ Scan:     ⌘⇧A  or click extension icon    │
 │ Engine:   axe-core 4.10.2 (Deque)          │
-│ AI Tiers: Nano → Ollama → Cloud → Rules   │
+│ AI Tiers: On-device → Local → Cloud → Rules   │
 │ Privacy:  Zero data out (default)          │
 │ History:  200 scans (chrome.storage)       │
 │ Export:   JSON · CSV · HTML · PDF · Copy   │

@@ -200,11 +200,11 @@ Produce ONLY valid JSON. No markdown fences, no commentary.`;
     const ollamaUrl = (process.env.LLM_API_URL || 'http://localhost:11434').replace(/\/+$/, '');
     const model = process.env.LLM_MODEL_NAME || 'llama3.1:8b';
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 120000);
+    const timer = setTimeout(() => controller.abort(), 30000);
     const r = await fetch(`${ollamaUrl}/api/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, prompt, stream: false }),
+      body: JSON.stringify({ model, prompt, stream: false, options: { num_predict: 512 } }),
       signal: controller.signal
     });
     clearTimeout(timer);

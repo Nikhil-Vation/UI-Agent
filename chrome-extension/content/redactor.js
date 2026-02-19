@@ -1,5 +1,5 @@
 /**
- * Data Redactor — Privacy layer for Vation Agent Chrome Extension
+ * Data Redactor — Privacy layer for Accea Agent Chrome Extension
  * 
  * Strips sensitive data (PII, cookies, form values, text content)
  * before anything leaves the machine. Keeps only structural info:
@@ -253,5 +253,5 @@
     stripCookies
   };
 
-  console.log('[Vation Agent] Redactor content script loaded');
+  console.log('[Accea Agent] Redactor content script loaded');
 })();

@@ -1,15 +1,15 @@
-Vation Agent — Short Summary
+Accea Agent — Short Summary
 =============================
 
 What it is
 ----------
-Vation Agent is a privacy-first Chrome extension that scans webpages for WCAG accessibility issues, provides an instant audit score, and generates AI-powered, actionable code fixes. It also surfaces Lighthouse and SEO recommendations so teams can improve accessibility while boosting search and performance metrics.
+Accea Agent is a privacy-first Chrome extension that scans webpages for WCAG accessibility issues, provides an instant audit score, and generates AI-powered, actionable code fixes. It also surfaces Lighthouse and SEO recommendations so teams can improve accessibility while boosting search and performance metrics.
 
 Key Capabilities (at-a-glance)
 -------------------------------
 - One-click scan (popup or `⌘⇧A`) using `axe-core` injected into the page (MAIN world).
 - Scores pages 0–100 (grade A/B/C/F) and lists issues by severity with quick filters.
-- AI-powered fix suggestions via a cascading LLM router: `window.ai` → local Ollama → cloud API → deterministic rules.
+- AI-powered fix suggestions via a cascading LLM router: on-device AI → local LLM → cloud API → deterministic rules.
 - PII redaction before any external call (7 regex patterns) — default is privacy-first.
 - Tips tab with Lighthouse estimate, Quick Wins, SEO crossover, Improvement Insights.
 - Onboarding intro hero with typewriter animation (8 phrases) that collapses on first scan.
@@ -19,7 +19,7 @@ Primary Components
 ------------------
 - `chrome-extension/` — popup UI, content scripts (`scanner.js`, `redactor.js`), styles, and `lib/llm-router.js`.
 - `orchestrator/` — Node/Express server (port 3000) offering `/scan`, `/fix`, `/health`, `/meta` endpoints and LLM proxying.
-- Local LLM (optional) — Ollama running at `http://localhost:11434` with model `llama3.1:8b`.
+- Local LLM (optional) — any compatible model running via a local server.
 - Docs — `chrome-extension/HOW-IT-WORKS.md` (deep dive) and `README.short.md` (this file).
 
 High-Level Flows
@@ -64,8 +64,8 @@ How to Run Locally (quick)
 1. Start local LLM (optional):
 
 ```bash
-# If using Ollama locally
-ollama serve
+# If using a local LLM server
+# Start your preferred LLM backend
 ```
 
 2. Start the orchestrator:
@@ -95,7 +95,7 @@ Limitations & Trade-offs
 
 Elevator Pitch (1–2 lines)
 --------------------------
-Vation Agent is a privacy-first browser extension that scans any webpage for accessibility issues and generates AI-powered code fixes, while surfacing Lighthouse and SEO tips so you can fix accessibility and boost search and performance metrics simultaneously.
+Accea Agent is a privacy-first browser extension that scans any webpage for accessibility issues and generates AI-powered code fixes, while surfacing Lighthouse and SEO tips so you can fix accessibility and boost search and performance metrics simultaneously.
 
 Next Steps I Can Do
 -------------------
