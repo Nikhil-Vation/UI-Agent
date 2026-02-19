@@ -352,6 +352,16 @@ function switchTab(tabName) {
 
 /* ═══════ Design tab ═══════ */
 
+/* Tech colour map for recognisable brand colours */
+const TECH_COLORS = {
+  'React':'#61dafb','Next.js':'#fff','Vue':'#42b883','Nuxt':'#00dc82',
+  'Angular':'#dd0031','Svelte':'#ff3e00','Gatsby':'#663399','Remix':'#f44250',
+  'jQuery':'#0769ad','Bootstrap':'#7952b3','Tailwind':'#38bdf8',
+  'WordPress':'#21759b','Shopify':'#96bf48','Webflow':'#4353ff',
+  'Framer':'#0055ff','GSAP':'#88ce02','Lodash':'#3492ff',
+  'TypeScript':'#3178c6','Vite':'#bd34fe','Webpack':'#8dd6f9','GraphQL':'#e10098'
+};
+
 function renderDesignTab() {
   const d = currentAnalysis?.designInfo;
   if (!d) {
@@ -362,121 +372,158 @@ function renderDesignTab() {
   els.designEmpty.classList.add('hidden');
   els.designContent.classList.remove('hidden');
 
-  // ── Page meta ──
-  const meta = d.meta || {};
-  const metaRows = [
-    ['Title',        meta.title],
-    ['URL',          meta.url],
-    ['Description',  meta.description],
-    ['Theme color',  meta.themeColor],
-    ['OG title',     meta.ogTitle],
-    ['OG image',     meta.ogImage],
-    ['Twitter card', meta.twitterCard],
-    ['Viewport',     meta.viewport],
-    ['Charset',      meta.charset],
-    ['Language',     meta.lang],
-    ['Canonical',    meta.canonical],
-    ['Favicon',      meta.favicon],
-  ].filter(([, v]) => v);
+  const meta   = d.meta   || {};
+  const colors = d.colors || [];
+  const fonts  = d.fonts  || [];
+  const tech   = d.tech   || [];
+  const tokens = d.tokens || {};
+  const tokenEntries = Object.entries(tokens);
+
+  // ── 1. Page Identity hero card ──
+  const faviconHtml = meta.favicon
+    ? `<img class="di-favicon" src="${escHtml(meta.favicon)}" alt="" onerror="this.style.display='none'">`
+    : `<div class="di-favicon-fallback"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></div>`;
+  const themeStyle = meta.themeColor ? `border-top: 3px solid ${meta.themeColor};` : '';
+  const urlHost = (() => { try { return new URL(meta.url || '').hostname; } catch(e) { return meta.url || ''; } })();
 
   els.designMetaSection.innerHTML = `
-    <div class="design-section-title">
-      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-      Page Info
-    </div>
-    <div class="meta-table">${
-      metaRows.map(([k, v]) => {
-        const isUrl = v && (v.startsWith('http') || v.startsWith('/'));
-        const display = v.length > 60 ? v.slice(0, 57) + '…' : v;
-        return `<div class="meta-row">
-          <span class="meta-key">${k}</span>
-          <span class="meta-val" title="${escHtml(v)}">${
-            isUrl
-              ? `<a class="meta-link" href="${escHtml(v)}" target="_blank" rel="noopener">${escHtml(display)}</a>`
-              : escHtml(display)
-          }</span>
-        </div>`;
-      }).join('')
-    }</div>`;
-
-  // ── Colors ──
-  const colors = d.colors || [];
-  if (colors.length) {
-    els.designColorsSection.innerHTML = `
-      <div class="design-section-title">
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="13.5" cy="6.5" r="0.5" fill="currentColor"/><circle cx="17.5" cy="10.5" r="0.5" fill="currentColor"/><circle cx="8.5" cy="7.5" r="0.5" fill="currentColor"/><circle cx="6.5" cy="12.5" r="0.5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>
-        Colour Palette
-        <span class="design-section-count">${colors.length}</span>
+    <div class="di-hero" style="${themeStyle}">
+      <div class="di-hero-head">
+        ${faviconHtml}
+        <div class="di-hero-text">
+          <div class="di-hero-title">${escHtml(meta.title || urlHost || 'Untitled')}</div>
+          <div class="di-hero-url">${escHtml(urlHost)}</div>
+        </div>
+        ${meta.lang ? `<span class="di-lang-badge">${escHtml(meta.lang.toUpperCase())}</span>` : ''}
       </div>
-      <div class="color-swatches">${
-        colors.map(c => `
-          <div class="color-swatch-wrap" title="${c.hex} · used ${c.count}×">
-            <div class="color-swatch" style="background:${c.hex};"
-                 data-hex="${c.hex}"
-                 onclick="navigator.clipboard?.writeText('${c.hex}');this.classList.add('copied');setTimeout(()=>this.classList.remove('copied'),1200)">
-            </div>
-            <span class="color-hex">${c.hex}</span>
-          </div>`).join('')
-      }</div>`;
+      ${meta.description ? `<p class="di-description">${escHtml(meta.description.slice(0,120))}${meta.description.length > 120 ? '…' : ''}</p>` : ''}
+      <div class="di-pills-row">
+        ${meta.charset    ? `<span class="di-pill">${escHtml(meta.charset)}</span>` : ''}
+        ${meta.viewport   ? `<span class="di-pill" title="${escHtml(meta.viewport)}">responsive</span>` : ''}
+        ${meta.twitterCard? `<span class="di-pill">Twitter card</span>` : ''}
+        ${meta.ogTitle    ? `<span class="di-pill">Open Graph</span>` : ''}
+        ${meta.themeColor ? `<span class="di-pill" style="background:${escHtml(meta.themeColor)};color:#fff;border-color:transparent">${escHtml(meta.themeColor)}</span>` : ''}
+      </div>
+    </div>`;
+
+  // ── 2. Colour palette ──
+  if (colors.length) {
+    // Build a wide gradient strip from the top colours
+    const strip = colors.map(c => c.hex).join(', ');
+    const big   = colors.slice(0, 5);
+    const rest  = colors.slice(5);
+    els.designColorsSection.innerHTML = `
+      <div class="di-card">
+        <div class="di-card-header">
+          <span class="di-card-title">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="13.5" cy="6.5" r="0.5" fill="currentColor"/><circle cx="17.5" cy="10.5" r="0.5" fill="currentColor"/><circle cx="8.5" cy="7.5" r="0.5" fill="currentColor"/><circle cx="6.5" cy="12.5" r="0.5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>
+            Colour Palette
+          </span>
+          <span class="di-badge">${colors.length}</span>
+        </div>
+        <div class="di-color-strip" style="background:linear-gradient(to right,${strip})"></div>
+        <div class="di-color-row">
+          ${big.map(c => `
+            <button class="di-swatch" style="background:${c.hex}" title="${c.hex} · ${c.count}×"
+              data-hex="${c.hex}"
+              onclick="navigator.clipboard?.writeText('${c.hex}');this.setAttribute('data-copied','1');setTimeout(()=>this.removeAttribute('data-copied'),1300)">
+            </button>`).join('')}
+          ${rest.length ? `<div class="di-swatch-more">${rest.map(c=>`<button class="di-swatch di-swatch-sm" style="background:${c.hex}" title="${c.hex}" onclick="navigator.clipboard?.writeText('${c.hex}');this.setAttribute('data-copied','1');setTimeout(()=>this.removeAttribute('data-copied'),1300)"></button>`).join('')}</div>` : ''}
+        </div>
+        <div class="di-color-labels">
+          ${big.map(c => `<span class="di-color-label">${c.hex}</span>`).join('')}
+        </div>
+      </div>`;
   } else {
     els.designColorsSection.innerHTML = '';
   }
 
-  // ── Fonts ──
-  const fonts = d.fonts || [];
+  // ── 3. Typography ──
   if (fonts.length) {
     els.designFontsSection.innerHTML = `
-      <div class="design-section-title">
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
-        Fonts
-        <span class="design-section-count">${fonts.length}</span>
-      </div>
-      <div class="font-chips">${
-        fonts.map(f => `<span class="font-chip" style="font-family:${f}">${escHtml(f)}</span>`).join('')
-      }</div>`;
+      <div class="di-card">
+        <div class="di-card-header">
+          <span class="di-card-title">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
+            Typography
+          </span>
+          <span class="di-badge">${fonts.length}</span>
+        </div>
+        <div class="di-font-list">
+          ${fonts.map((f, i) => {
+            const sizes = ['28px','20px','15px','13px','12px'];
+            const sz = sizes[Math.min(i, sizes.length - 1)];
+            const primary = f.split(',')[0].replace(/["']/g,'').trim();
+            return `
+              <div class="di-font-row">
+                <div class="di-font-preview" style="font-family:${f};font-size:${sz}">${escHtml(primary)}</div>
+                <div class="di-font-name">${escHtml(primary)}</div>
+              </div>`;
+          }).join('')}
+        </div>
+      </div>`;
   } else {
     els.designFontsSection.innerHTML = '';
   }
 
-  // ── Tech stack ──
-  const tech = d.tech || [];
+  // ── 4. Tech Stack ──
   if (tech.length) {
     els.designTechSection.innerHTML = `
-      <div class="design-section-title">
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-        Tech Stack
-        <span class="design-section-count">${tech.length}</span>
-      </div>
-      <div class="tech-chips">${
-        tech.map(t => `<span class="tech-chip">${escHtml(t)}</span>`).join('')
-      }</div>`;
+      <div class="di-card">
+        <div class="di-card-header">
+          <span class="di-card-title">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+            Tech Stack
+          </span>
+          <span class="di-badge">${tech.length}</span>
+        </div>
+        <div class="di-tech-grid">
+          ${tech.map(t => {
+            const col = TECH_COLORS[t] || 'rgba(255,255,255,0.15)';
+            return `<div class="di-tech-item">
+              <span class="di-tech-dot" style="background:${col};box-shadow:0 0 6px ${col}40"></span>
+              <span class="di-tech-name">${escHtml(t)}</span>
+            </div>`;
+          }).join('')}
+        </div>
+      </div>`;
   } else {
     els.designTechSection.innerHTML = '';
   }
 
-  // ── CSS tokens / custom properties ──
-  const tokens = d.tokens || {};
-  const tokenEntries = Object.entries(tokens);
+  // ── 5. CSS Design Tokens ──
   if (tokenEntries.length) {
+    const colorTokens = tokenEntries.filter(([,v]) => /^#|^rgb|^hsl/.test((v||'').trim()));
+    const otherTokens = tokenEntries.filter(([,v]) => !/^#|^rgb|^hsl/.test((v||'').trim()));
     els.designTokensSection.innerHTML = `
-      <div class="design-section-title">
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-        CSS Design Tokens
-        <span class="design-section-count">${tokenEntries.length}</span>
-      </div>
-      <div class="meta-table">${
-        tokenEntries.slice(0, 30).map(([k, v]) => {
-          const isColor = /^#|^rgb|^hsl/.test((v || '').trim());
-          return `<div class="meta-row">
-            <span class="meta-key token-name">${escHtml(k)}</span>
-            <span class="meta-val">${
-              isColor
-                ? `<span class="token-swatch" style="background:${escHtml(v)}"></span>`
-                : ''
-            }${escHtml(v.length > 40 ? v.slice(0, 37) + '…' : v)}</span>
-          </div>`;
-        }).join('')
-      }${tokenEntries.length > 30 ? `<div class="meta-row"><span class="meta-key" style="color:var(--text-muted)">+${tokenEntries.length - 30} more…</span></div>` : ''}</div>`;
+      <div class="di-card">
+        <div class="di-card-header">
+          <span class="di-card-title">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+            CSS Tokens
+          </span>
+          <span class="di-badge">${tokenEntries.length}</span>
+        </div>
+        ${colorTokens.length ? `
+          <div class="di-tokens-label">Colour tokens</div>
+          <div class="di-token-swatches">
+            ${colorTokens.slice(0,20).map(([k,v]) => `
+              <div class="di-token-swatch-wrap" title="${escHtml(k)}: ${escHtml(v)}">
+                <div class="di-token-swatch" style="background:${escHtml(v)}"></div>
+                <span class="di-token-var">${escHtml(k.replace('--',''))}</span>
+              </div>`).join('')}
+          </div>` : ''}
+        ${otherTokens.length ? `
+          <div class="di-tokens-label" style="margin-top:10px">Other tokens</div>
+          <div class="di-token-rows">
+            ${otherTokens.slice(0,16).map(([k,v]) => `
+              <div class="di-token-row">
+                <span class="di-token-key">${escHtml(k)}</span>
+                <span class="di-token-val">${escHtml(v.length>32?v.slice(0,29)+'…':v)}</span>
+              </div>`).join('')}
+            ${otherTokens.length > 16 ? `<div class="di-token-row"><span class="di-token-key" style="color:var(--text-muted)">+${otherTokens.length-16} more</span></div>` : ''}
+          </div>` : ''}
+      </div>`;
   } else {
     els.designTokensSection.innerHTML = '';
   }
