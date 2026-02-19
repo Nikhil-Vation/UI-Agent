@@ -344,6 +344,11 @@ function switchTab(tabName) {
   $$('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tabName));
   $$('.tab-content').forEach(c => c.classList.toggle('active', c.id === `tab-${tabName}`));
 
+  // Quick actions + filter pills are only relevant on the Issues tab
+  const isIssues = tabName === 'issues';
+  els.quickActions.classList.toggle('hidden', !isIssues);
+  els.filterBar.classList.toggle('hidden', !isIssues);
+
   if (tabName === 'history') loadHistory();
   if (tabName === 'tips') renderTips();
   if (tabName === 'checklist') renderChecklist();
@@ -699,10 +704,8 @@ function renderResults(analysis) {
   els.badgeMinor.textContent = `${counts.minor || 0} Minor`;
   els.badges.classList.remove('hidden');
 
-  // Show tabs, quick actions, filter bar
+  // Show tabs, then switch to issues (which also shows quick actions + filter bar)
   els.tabBar.classList.remove('hidden');
-  els.quickActions.classList.remove('hidden');
-  els.filterBar.classList.remove('hidden');
   switchTab('issues');
 
   // Issues list
