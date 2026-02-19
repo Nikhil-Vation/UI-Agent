@@ -1,5 +1,5 @@
 /**
- * Vation Agent Chrome Extension — Popup Controller V2
+ * Accea Agent Chrome Extension — Popup Controller V2
  * Enhanced with: Tabs, History, Export, Confetti, Filters,
  * Animated counters, Scan timer, Keyboard shortcuts
  */
@@ -21,6 +21,12 @@ const els = {
   scoreStatus:  $('#score-status'),
   scoreSummary: $('#score-summary'),
   scoreGrade:   $('#score-grade'),
+  scoreSource:  $('#score-source'),
+  scoreInfoBtn: $('#score-info-btn'),
+  scoreBreakdown: $('#score-breakdown'),
+  breakdownRows:  $('#breakdown-rows'),
+  scoreAttribution: $('#score-attribution'),
+  lhLoadingHint:    $('#lh-loading-hint'),
   scanTime:     $('#scan-time'),
   
   // Badges
@@ -44,6 +50,13 @@ const els = {
   quickActions: $('#quick-actions'),
   filterBar:    $('#filter-bar'),
   
+  // Prefetch status
+  prefetchStatus:  $('#prefetch-status'),
+  prefetchIcon:    $('#prefetch-icon'),
+  prefetchText:    $('#prefetch-text'),
+  prefetchProgress:$('#prefetch-progress'),
+  prefetchBarFill: $('#prefetch-bar-fill'),
+
   // Containers
   loading:      $('#loading'),
   progressBar:  $('#scan-progress-bar'),
@@ -57,10 +70,16 @@ const els = {
   historyList:  $('#history-list'),
   historyEmpty: $('#history-empty'),
   
-  // LLM status
-  llmStatus:    $('#llm-status'),
-  llmDot:       $('#llm-dot'),
-  llmLabel:     $('#llm-label'),
+  // Checklist
+  checklistList:     $('#checklist-list'),
+  checklistEmpty:    $('#checklist-empty'),
+  checklistLighthouse: $('#checklist-lighthouse'),
+  checklistLhScores: $('#checklist-lh-scores'),
+
+  // Lighthouse (real)
+  lighthouseSection: $('#lighthouse-section'),
+  lighthouseScores:  $('#lighthouse-scores'),
+  lhStatus:          $('#lh-status'),
   
   // Settings
   settingPrivacy:       $('#setting-privacy'),
@@ -68,8 +87,10 @@ const els = {
   settingServerUrl:     $('#setting-server-url'),
   settingAutoHighlight: $('#setting-auto-highlight'),
   settingBadge:         $('#setting-badge'),
+  settingPsApiKey:      $('#setting-ps-api-key'),
   
   // Capabilities
+  capOverall:   $('#cap-overall'),
   capWindowAI:  $('#cap-windowai'),
   capLocalhost: $('#cap-localhost'),
   capCloud:     $('#cap-cloud'),
@@ -86,8 +107,6 @@ const els = {
 
   // Tips tab
   tipsEmpty:         $('#tips-empty'),
-  lighthouseEstimate:$('#lighthouse-estimate'),
-  lighthouseBars:    $('#lighthouse-bars'),
   quickWins:         $('#quick-wins'),
   quickWinsList:     $('#quick-wins-list'),
   seoCrossover:      $('#seo-crossover'),
@@ -96,12 +115,46 @@ const els = {
   improvementList:   $('#improvement-list'),
 };
 
+/* ═══════ SVG Icon Templates ═══════ */
+const SVG = {
+  locate: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="10" r="3"/><path d="M12 21.7C17.3 17 20 13 20 10a8 8 0 1 0-16 0c0 3 2.7 7 8 11.7z"/></svg>',
+  suggest: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2z"/></svg>',
+  zap: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>',
+  check: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>',
+  copy: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>',
+  lock: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>',
+  cloud: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/></svg>',
+  eye: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>',
+  eyeOff: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>',
+  checkCircle: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>',
+  xCircle: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
+  alertTriangle: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+  globe: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>',
+};
+
+/** Page-level axe rule IDs (affect the whole document, not individual elements) */
+const PAGE_LEVEL_RULES = new Set([
+  'html-has-lang', 'html-lang-valid', 'document-title', 'meta-viewport',
+  'bypass', 'landmark-one-main', 'region', 'page-has-heading-one',
+  'html-xml-lang-mismatch', 'valid-lang'
+]);
+
 /* ═══════ State ═══════ */
 let currentTabId = null;
 let currentAnalysis = null;
 let highlightsActive = false;
 let scanStartTime = null;
 let activeFilter = 'all';
+
+/* ═══════ Lighthouse state ═══════ */
+let lighthouseData = null;
+let lighthouseLoading = false;
+
+/* ═══════ Suggestion cache (pre-fetched) ═══════ */
+const suggestionCache = new Map(); // key: issue.id, value: fix response
+let prefetchInProgress = false;
+let prefetchTotal = 0;
+let prefetchDone = 0;
 
 /* ═══════ Typewriter engine ═══════ */
 
@@ -172,6 +225,43 @@ document.addEventListener('DOMContentLoaded', async () => {
   detectCapabilities();
   bindEvents();
   startTypewriter();
+
+  // Listen for Lighthouse results pushed from the service worker.
+  // The SW fetches in background; this fires whether or not the popup was open during fetch.
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg.action !== 'lighthouse-ready') return;
+    lighthouseLoading = false;
+    if (msg.error) {
+      lighthouseData = { error: msg.error };
+    } else if (msg.data) {
+      lighthouseData = msg.data;
+    }
+    els.lhLoadingHint?.classList.add('hidden');
+    renderLighthouseSection();
+    renderChecklistLighthouse();
+    upgradeScoreCardWithLighthouse();
+  });
+
+  // If popup opens after a scan already happened, try to get cached Lighthouse data
+  if (currentTabId) {
+    try {
+      const cachedTab = await chrome.tabs.get(currentTabId);
+      if (cachedTab?.url) {
+        const cached = await sendMessage({ action: 'get-lighthouse', url: cachedTab.url });
+        if (cached?.status === 'ready' && cached.data) {
+          lighthouseLoading = false;
+          lighthouseData = cached.data;
+          // Only render if a scan result is already showing
+          if (!els.scoreCard.classList.contains('hidden')) {
+            els.lhLoadingHint?.classList.add('hidden');
+            renderLighthouseSection();
+            renderChecklistLighthouse();
+            upgradeScoreCardWithLighthouse();
+          }
+        }
+      }
+    } catch { /* no cached data, that's fine */ }
+  }
 });
 
 /* ═══════ Event binding ═══════ */
@@ -205,6 +295,9 @@ function bindEvents() {
 
   // Fix All
   els.btnFixAll?.addEventListener('click', handleFixAll);
+
+  // Score info toggle
+  els.scoreInfoBtn.addEventListener('click', toggleScoreBreakdown);
 
   // Settings auto-save
   const settingInputs = [
@@ -243,6 +336,7 @@ function switchTab(tabName) {
 
   if (tabName === 'history') loadHistory();
   if (tabName === 'tips') renderTips();
+  if (tabName === 'checklist') renderChecklist();
 }
 
 /* ═══════ Severity filter ═══════ */
@@ -290,10 +384,18 @@ async function handleScan() {
   els.error.classList.add('hidden');
   els.issuesContainer.classList.add('hidden');
   els.scoreCard.classList.add('hidden');
+  els.scoreBreakdown.classList.remove('expanded');
+  els.scoreBreakdown.classList.add('hidden');
+  els.scoreInfoBtn.classList.remove('active');
+  els.scoreAttribution.classList.add('hidden');
+  els.lhLoadingHint.classList.add('hidden');
+  clearTimeout(_breakdownAutoTimer);
+  _breakdownUserTouched = false;
   els.badges.classList.add('hidden');
   els.tabBar.classList.add('hidden');
   els.quickActions.classList.add('hidden');
   els.filterBar.classList.add('hidden');
+  updatePrefetchStatus('hide');
 
   // Fake progress bar
   scanStartTime = Date.now();
@@ -312,6 +414,13 @@ async function handleScan() {
 
     renderResults(response.analysis);
     saveToHistory(response.analysis);
+
+    // Pre-fetch code suggestions in background so they're ready instantly
+    suggestionCache.clear();
+    prefetchSuggestions();
+
+    // Fetch real Lighthouse scores in parallel (non-blocking)
+    fetchLighthouseScores();
   } catch (err) {
     showError(err.message);
   } finally {
@@ -359,6 +468,20 @@ function renderResults(analysis) {
   els.scoreGrade.className = `score-grade ${grade.class}`;
   els.scoreGrade.classList.remove('hidden');
 
+  // Score source badge — initially axe-core, upgraded when Lighthouse arrives
+  els.scoreSource.textContent = 'axe-core';
+  els.scoreSource.className = 'score-source axe';
+  els.scoreSource.title = 'Score from axe-core engine — Lighthouse score loading…';
+  els.scoreSource.classList.remove('hidden');
+
+  // Info button + initial breakdown
+  els.scoreInfoBtn.classList.remove('hidden');
+  renderScoreBreakdown(score, null);
+
+  // Always-visible attribution + loading hint
+  els.scoreAttribution.classList.remove('hidden');
+  els.lhLoadingHint.classList.remove('hidden');
+
   const status = analysis.complianceStatus || 'Unknown';
   els.scoreStatus.textContent = status;
   els.scoreStatus.className = 'score-status ' + status.toLowerCase().replace(/\s+/g, '-');
@@ -369,11 +492,14 @@ function renderResults(analysis) {
 
   // Scan time
   if (analysis._scanDuration) {
-    els.scanTime.textContent = `⚡ Scanned in ${analysis._scanDuration}s`;
+    els.scanTime.textContent = `Scanned in ${analysis._scanDuration}s`;
     els.scanTime.classList.remove('hidden');
   }
 
   els.scoreCard.classList.remove('hidden');
+
+  // Auto-open breakdown for 5s so users see the scores immediately
+  setTimeout(() => autoOpenScoreBreakdown(), 300);
 
   // Severity badges
   const counts = analysis.counts || {};
@@ -397,7 +523,7 @@ function renderResults(analysis) {
   if (issues.length === 0) {
     els.issuesList.innerHTML = `
       <li class="no-issues">
-        <div class="no-issues-icon">🎉</div>
+        <div class="no-issues-icon">${SVG.checkCircle}</div>
         <div class="no-issues-text">Perfect Score!</div>
         <div class="no-issues-sub">No accessibility issues found</div>
       </li>`;
@@ -422,6 +548,55 @@ function getGrade(score) {
   if (score >= 70) return { label: 'Grade B', class: 'b' };
   if (score >= 50) return { label: 'Grade C', class: 'c' };
   return { label: 'Grade F', class: 'f' };
+}
+
+/* Auto-collapse timer handle — cancelled if user manually toggles */
+let _breakdownAutoTimer = null;
+/* Track whether user manually interacted with the panel */
+let _breakdownUserTouched = false;
+
+/**
+ * Open the breakdown panel, start a 5-second auto-collapse unless the
+ * user has already manually interacted with it this session.
+ */
+function autoOpenScoreBreakdown() {
+  _breakdownUserTouched = false;
+  clearTimeout(_breakdownAutoTimer);
+
+  const panel = els.scoreBreakdown;
+  panel.classList.remove('hidden');
+  void panel.offsetHeight; // force reflow
+  panel.classList.add('expanded');
+  els.scoreCard.classList.add('breakdown-open');
+  els.scoreInfoBtn.classList.add('active');
+
+  _breakdownAutoTimer = setTimeout(() => {
+    if (!_breakdownUserTouched) {
+      panel.classList.remove('expanded');
+      els.scoreCard.classList.remove('breakdown-open');
+      els.scoreInfoBtn.classList.remove('active');
+    }
+  }, 5000);
+}
+
+function toggleScoreBreakdown() {
+  // User manually toggled — cancel auto-collapse and lock open/closed
+  _breakdownUserTouched = true;
+  clearTimeout(_breakdownAutoTimer);
+
+  const panel = els.scoreBreakdown;
+  const isOpen = panel.classList.contains('expanded');
+  if (isOpen) {
+    panel.classList.remove('expanded');
+    els.scoreCard.classList.remove('breakdown-open');
+    els.scoreInfoBtn.classList.remove('active');
+  } else {
+    panel.classList.remove('hidden');
+    void panel.offsetHeight;
+    panel.classList.add('expanded');
+    els.scoreCard.classList.add('breakdown-open');
+    els.scoreInfoBtn.classList.add('active');
+  }
 }
 
 function animateCounter(el, from, to, duration) {
@@ -449,20 +624,29 @@ function createIssueCard(issue, idx) {
   const severity = (issue.severity || 'moderate').toLowerCase();
   const wcagTags = (issue.wcag || []).slice(0, 2);
   const elemCount = issue.elementCount || issue.nodes?.length || 0;
+  const isPageLevel = PAGE_LEVEL_RULES.has(issue.id);
+
+  if (isPageLevel) li.classList.add('page-level-issue');
+
+  const markerContent = isPageLevel
+    ? `<div class="issue-marker page-level">${SVG.globe} PAGE</div>`
+    : `<div class="issue-marker">#${idx + 1}</div>`;
 
   li.innerHTML = `
     <div class="issue-card-header" data-idx="${idx}">
+      ${markerContent}
       <div class="issue-severity-dot ${severity}"></div>
       <div class="issue-info">
         <div class="issue-title">${escapeHtml(issue.title || issue.id)}</div>
         <div class="issue-meta">
           ${wcagTags.map(w => `<span class="issue-wcag">${escapeHtml(w)}</span>`).join('')}
+          ${isPageLevel ? '<span class="page-level-tag">' + SVG.globe + ' Page-level</span>' : ''}
           ${elemCount > 0 ? `<span class="issue-count-badge">${elemCount} element${elemCount !== 1 ? 's' : ''}</span>` : ''}
         </div>
       </div>
       <div class="issue-actions">
-        <button class="issue-btn locate-btn" data-selector="${escapeAttr(issue.selectors?.[0] || '')}" title="Locate on page">📍</button>
-        <button class="issue-btn fix-btn" data-idx="${idx}" title="Get AI fix">Fix it ✨</button>
+        <button class="issue-btn locate-btn" data-selector="${escapeAttr(issue.selectors?.[0] || '')}" data-issue-num="${idx + 1}" title="Locate on page">${SVG.locate}</button>
+        <button class="issue-btn fix-btn" data-idx="${idx}" title="Get AI code suggestion">${SVG.suggest} Suggest</button>
       </div>
     </div>
     <div class="issue-detail">
@@ -472,19 +656,37 @@ function createIssueCard(issue, idx) {
     </div>
   `;
 
-  // Toggle expand
+  // Toggle expand + spotlight element on page
   const header = li.querySelector('.issue-card-header');
   header.addEventListener('click', (e) => {
     if (e.target.closest('.issue-btn')) return;
     li.classList.toggle('expanded');
+
+    // Clear all spotlit states first
+    document.querySelectorAll('.issue-card.spotlit').forEach(c => c.classList.remove('spotlit'));
+
+    // Spotlight the element on the page when expanding
+    if (li.classList.contains('expanded')) {
+      li.classList.add('spotlit');
+      const selector = issue.selectors?.[0];
+      if (selector) {
+        sendMessage({ action: 'spotlight', tabId: currentTabId, selector });
+      }
+    }
   });
 
-  // Locate button
+  // Locate button — scroll to element on page + flash card
   const locateBtn = li.querySelector('.locate-btn');
-  locateBtn.addEventListener('click', () => {
+  locateBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
     const selector = locateBtn.dataset.selector;
     if (selector) {
       sendMessage({ action: 'scroll-to', tabId: currentTabId, selector });
+      // Flash the card to confirm
+      li.classList.add('locating');
+      setTimeout(() => li.classList.remove('locating'), 1500);
+    } else {
+      showToast('No selector — element may be dynamic');
     }
   });
 
@@ -498,8 +700,24 @@ function createIssueCard(issue, idx) {
 /* ═══════ Fix handler ═══════ */
 
 async function handleFix(issue, btn) {
+  // Check cache first — instant if pre-fetched
+  const cached = suggestionCache.get(issue.id);
+  if (cached) {
+    showFixModal(cached, issue);
+    btn.innerHTML = SVG.checkCircle + ' Ready';
+    setTimeout(() => { btn.innerHTML = SVG.suggest + ' Suggest'; }, 1200);
+    return;
+  }
+
+  // Not cached — show animated loading with status messages
   btn.classList.add('loading');
-  btn.textContent = '⏳';
+  const loadingMessages = ['Analyzing…', 'Asking AI…', 'Generating…', 'Almost…'];
+  let msgIdx = 0;
+  btn.textContent = loadingMessages[0];
+  const msgInterval = setInterval(() => {
+    msgIdx = Math.min(msgIdx + 1, loadingMessages.length - 1);
+    btn.textContent = loadingMessages[msgIdx];
+  }, 2500);
 
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -511,15 +729,21 @@ async function handleFix(issue, btn) {
     });
 
     if (!response?.ok || !response.fix) {
-      throw new Error(response?.error || 'No fix generated');
+      throw new Error(response?.error || 'No suggestion generated');
     }
 
+    // Cache for future clicks
+    suggestionCache.set(issue.id, response.fix);
     showFixModal(response.fix, issue);
   } catch (err) {
-    showError(`Fix failed: ${err.message}`);
+    showError(`Suggestion failed: ${err.message}`);
   } finally {
+    clearInterval(msgInterval);
     btn.classList.remove('loading');
-    btn.textContent = 'Fix it ✨';
+    btn.innerHTML = suggestionCache.has(issue.id) ? SVG.checkCircle + ' Ready' : SVG.suggest + ' Suggest';
+    if (suggestionCache.has(issue.id)) {
+      setTimeout(() => { btn.innerHTML = SVG.suggest + ' Suggest'; }, 1200);
+    }
   }
 }
 
@@ -529,10 +753,16 @@ async function handleFixAll() {
   if (!currentAnalysis?.issues?.length) return;
 
   els.btnFixAll.classList.add('active');
-  els.btnFixAll.textContent = '⏳ Fixing…';
+  els.btnFixAll.textContent = '✨ Suggesting…';
   let fixCount = 0;
+  const issues = currentAnalysis.issues.slice(0, 5);
 
-  for (const issue of currentAnalysis.issues.slice(0, 5)) {
+  for (const issue of issues) {
+    // Skip if already cached
+    if (suggestionCache.has(issue.id)) {
+      fixCount++;
+      continue;
+    }
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       const response = await sendMessage({
@@ -541,30 +771,168 @@ async function handleFixAll() {
         pageUrl: tab?.url || '',
         tabId: currentTabId
       });
-      if (response?.ok) fixCount++;
+      if (response?.ok && response.fix) {
+        suggestionCache.set(issue.id, response.fix);
+        fixCount++;
+      }
     } catch { /* continue */ }
+    els.btnFixAll.textContent = `✨ ${fixCount}/${issues.length}`;
   }
 
+  // Update all Suggest buttons to show cached state
+  updateSuggestButtonStates();
+
   els.btnFixAll.classList.remove('active');
-  els.btnFixAll.textContent = '✨ Fix All';
-  showToast(`✨ Generated ${fixCount} fixes! Click individual "Fix it" buttons to view.`);
+  els.btnFixAll.textContent = '✨ Suggest All';
+  showToast(`Generated ${fixCount} suggestions — click any Suggest button to view`);
+}
+
+/**
+ * Pre-fetch code suggestions for all issues right after scan.
+ * Runs in background so user sees instant results when they click "Suggest".
+ */
+async function prefetchSuggestions() {
+  if (!currentAnalysis?.issues?.length) return;
+  if (prefetchInProgress) return;
+
+  prefetchInProgress = true;
+  const issues = currentAnalysis.issues;
+  prefetchTotal = issues.length;
+  prefetchDone = 0;
+
+  // Show status banner
+  updatePrefetchStatus('working');
+
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const pageUrl = tab?.url || '';
+
+  // Dedup issues by rule ID — same rule gets same suggestion
+  // e.g. 10 images missing alt text all share one LLM call
+  const uniqueRules = new Map(); // ruleId → first issue
+  const ruleOrder = [];          // track order for progress
+  for (const issue of issues) {
+    if (suggestionCache.has(issue.id)) {
+      prefetchDone++;
+      continue;
+    }
+    if (!uniqueRules.has(issue.id)) {
+      uniqueRules.set(issue.id, issue);
+      ruleOrder.push(issue.id);
+    }
+  }
+
+  updatePrefetchStatus('working');
+
+  // Process unique rules in parallel batches of 4
+  const BATCH_SIZE = 4;
+  for (let i = 0; i < ruleOrder.length; i += BATCH_SIZE) {
+    const batch = ruleOrder.slice(i, i + BATCH_SIZE);
+    const promises = batch.map(async (ruleId) => {
+      const issue = uniqueRules.get(ruleId);
+      try {
+        const response = await sendMessage({
+          action: 'fix',
+          issue,
+          pageUrl,
+          tabId: currentTabId
+        });
+        if (response?.ok && response.fix) {
+          // Cache for ALL issues with this rule ID
+          for (const iss of issues) {
+            if (iss.id === ruleId) {
+              suggestionCache.set(iss.id, response.fix);
+            }
+          }
+        }
+      } catch { /* silent */ }
+      // Count all issues with this rule as done
+      const count = issues.filter(iss => iss.id === ruleId).length;
+      prefetchDone += count;
+      updatePrefetchStatus('working');
+    });
+
+    await Promise.all(promises);
+    updateSuggestButtonStates();
+  }
+
+  prefetchInProgress = false;
+  updatePrefetchStatus('done');
+}
+
+/**
+ * Update the prefetch status banner.
+ * @param {'working'|'done'|'hide'} state
+ */
+function updatePrefetchStatus(state) {
+  if (!els.prefetchStatus) return;
+
+  if (state === 'hide') {
+    els.prefetchStatus.classList.add('hidden');
+    return;
+  }
+
+  els.prefetchStatus.classList.remove('hidden');
+
+  if (state === 'working') {
+    const pct = prefetchTotal > 0 ? Math.round((prefetchDone / prefetchTotal) * 100) : 0;
+    els.prefetchIcon.innerHTML = '<span class="prefetch-spinner"></span>';
+    els.prefetchText.textContent = prefetchDone === 0 ? 'Preparing AI suggestions…' : 'AI is generating code suggestions…';
+    els.prefetchProgress.textContent = `${prefetchDone}/${prefetchTotal}`;
+    els.prefetchBarFill.style.width = pct + '%';
+    els.prefetchStatus.className = 'prefetch-status working';
+  } else if (state === 'done') {
+    const count = suggestionCache.size;
+    els.prefetchIcon.innerHTML = SVG.checkCircle;
+    els.prefetchText.textContent = count > 0
+      ? `✅ All ${count} suggestion${count > 1 ? 's' : ''} ready — click Suggest to view`
+      : 'No suggestions available';
+    els.prefetchProgress.textContent = '';
+    els.prefetchBarFill.style.width = '100%';
+    els.prefetchStatus.className = 'prefetch-status done';
+
+    // Auto-fade after 10 seconds
+    setTimeout(() => {
+      if (!prefetchInProgress) {
+        els.prefetchStatus.classList.add('fade-out');
+      }
+    }, 10000);
+  }
+}
+
+/**
+ * Update all Suggest buttons to show ✅ if their suggestion is cached
+ */
+function updateSuggestButtonStates() {
+  document.querySelectorAll('.fix-btn').forEach(btn => {
+    const idx = parseInt(btn.dataset.idx, 10);
+    const issue = currentAnalysis?.issues?.[idx];
+    if (issue && suggestionCache.has(issue.id) && !btn.classList.contains('loading')) {
+      btn.innerHTML = SVG.checkCircle + ' Ready';
+      btn.classList.add('cached');
+      setTimeout(() => {
+        if (btn.classList.contains('cached')) {
+          btn.innerHTML = SVG.suggest + ' Suggest';
+        }
+      }, 2000);
+    }
+  });
 }
 
 /* ═══════ Fix modal ═══════ */
 
 function showFixModal(fix, issue) {
-  els.fixTitle.textContent = fix.fixTitle || `Fix: ${issue.id}`;
+  els.fixTitle.textContent = fix.fixTitle || `Suggestion: ${issue.id}`;
   
-  const sourceIcon = fix.private ? '🔒' : '☁️';
+  const sourceIcon = fix.private ? SVG.lock : SVG.cloud;
   const sourceClass = fix.private ? 'private' : 'cloud';
   const sourceLabel = fix.source || 'unknown';
   const confidence = fix.confidence ? `${Math.round(fix.confidence * 100)}%` : '—';
   
   els.fixBody.innerHTML = `
-    <div class="fix-label">Before</div>
+    <div class="fix-label">Current Code</div>
     <div class="fix-code before">${escapeHtml(fix.before || '(no code)')}</div>
     
-    <div class="fix-label">After</div>
+    <div class="fix-label">Suggested Fix</div>
     <div class="fix-code after">${escapeHtml(fix.after || '(no suggestion)')}</div>
     
     <div class="fix-label">Explanation</div>
@@ -576,18 +944,18 @@ function showFixModal(fix, issue) {
       <span>Confidence: ${confidence}</span>
     </div>
     
-    <button class="fix-copy-btn" id="fix-copy">📋 Copy Fixed Code</button>
+    <button class="fix-copy-btn" id="fix-copy">${SVG.copy} Copy Suggested Code</button>
   `;
 
   const copyBtn = $('#fix-copy');
   copyBtn.addEventListener('click', async () => {
     try {
       await navigator.clipboard.writeText(fix.after || '');
-      copyBtn.textContent = '✓ Copied!';
-      showToast('✅ Code copied to clipboard');
-      setTimeout(() => { copyBtn.textContent = '📋 Copy Fixed Code'; }, 2000);
+      copyBtn.innerHTML = SVG.check + ' Copied!';
+      showToast('Code copied to clipboard');
+      setTimeout(() => { copyBtn.innerHTML = SVG.copy + ' Copy Suggested Code'; }, 2000);
     } catch {
-      copyBtn.textContent = '⚠️ Copy failed';
+      copyBtn.textContent = 'Copy failed';
     }
   });
 
@@ -649,7 +1017,7 @@ async function loadHistory() {
       if (idx < history.length - 1) {
         const prev = history[idx + 1];
         if (prev.url === entry.url) {
-          trend = entry.score > prev.score ? '📈' : entry.score < prev.score ? '📉' : '➡️';
+          trend = entry.score > prev.score ? '↑' : entry.score < prev.score ? '↓' : '→';
         }
       }
 
@@ -660,7 +1028,7 @@ async function loadHistory() {
           <div class="history-meta">
             <span>${entry.issues} issues</span>
             <span>${ago}</span>
-            ${entry.duration ? `<span>⚡${entry.duration}s</span>` : ''}
+            ${entry.duration ? `<span>${entry.duration}s</span>` : ''}
           </div>
         </div>
         ${trend ? `<span class="history-trend">${trend}</span>` : ''}
@@ -686,7 +1054,7 @@ function timeAgo(ts) {
 
 function handleExport(format) {
   if (!currentAnalysis) {
-    showToast('⚠️ Run a scan first');
+    showToast('Run a scan first');
     return;
   }
 
@@ -697,7 +1065,7 @@ function handleExport(format) {
         `a11y-report-${Date.now()}.json`,
         'application/json'
       );
-      showToast('📋 JSON report downloaded');
+      showToast('JSON report downloaded');
       break;
 
     case 'csv':
@@ -706,7 +1074,7 @@ function handleExport(format) {
         `a11y-report-${Date.now()}.csv`,
         'text/csv'
       );
-      showToast('📊 CSV report downloaded');
+      showToast('CSV report downloaded');
       break;
 
     case 'pdf':
@@ -745,7 +1113,7 @@ function generatePDFReport(analysis) {
 
   // Open in new tab — the report auto-triggers print dialog
   chrome.tabs.create({ url }, () => {
-    showToast('📄 PDF report opened — use Print → Save as PDF');
+    showToast('PDF report opened — use Print → Save as PDF');
   });
 }
 
@@ -873,7 +1241,7 @@ function generateDetailedHTMLReport(analysis) {
     <div class="report-header">
       <h1>♿ Accessibility <span>Audit Report</span></h1>
       <div class="report-branding">
-        <strong>Vation Agent</strong>
+        <strong>Accea Agent</strong>
         Privacy-First Scanner
       </div>
     </div>
@@ -952,6 +1320,12 @@ function generateDetailedHTMLReport(analysis) {
       </div>
     </div>`).join('')}` : ''}
 
+    <!-- Checklist Results -->
+    ${generateChecklistReportSection(issues)}
+
+    <!-- Lighthouse Scores -->
+    ${generateLighthouseReportSection()}
+
     <!-- Footer -->
     <div class="report-footer">
       <div class="left">
@@ -959,7 +1333,7 @@ function generateDetailedHTMLReport(analysis) {
         Powered by axe-core accessibility testing engine.
       </div>
       <div class="right">
-        <strong>Vation Agent</strong><br>
+        <strong>Accea Agent</strong><br>
         ${scanDate}
       </div>
     </div>
@@ -973,6 +1347,153 @@ function generateDetailedHTMLReport(analysis) {
   </script>
 </body>
 </html>`;
+}
+
+/**
+ * Generate checklist section for the PDF report
+ */
+function generateChecklistReportSection(issues) {
+  const issueIds = new Set(issues.map(i => i.id));
+
+  const items = CHECKLIST_ITEMS.map(item => {
+    let status = 'pass';
+    let detail = '';
+
+    if (item.special === 'mobile') {
+      const vpIssue = issues.find(i => i.id === 'meta-viewport');
+      status = vpIssue ? 'fail' : 'pass';
+      detail = vpIssue ? 'Viewport blocks zoom or scaling' : 'Viewport allows user zoom';
+    } else if (item.special === 'lighthouse') {
+      if (lighthouseData && !lighthouseData.error) {
+        const perfScore = lighthouseData.performance;
+        status = perfScore >= 50 ? 'pass' : 'fail';
+        detail = `Perf: ${lighthouseData.performance} · A11y: ${lighthouseData.accessibility} · SEO: ${lighthouseData.seo}`;
+      } else {
+        status = 'warn';
+        detail = lighthouseData?.error || 'Not available';
+      }
+    } else {
+      const failing = item.axePass.filter(ruleId => issueIds.has(ruleId));
+      if (failing.length > 0) {
+        status = 'fail';
+        const failIssues = issues.filter(i => failing.includes(i.id));
+        const totalElements = failIssues.reduce((s, i) => s + (i.elementCount || 0), 0);
+        detail = `${failing.length} rule${failing.length > 1 ? 's' : ''} failing` + (totalElements > 0 ? ` · ${totalElements} element${totalElements > 1 ? 's' : ''}` : '');
+      } else {
+        status = 'pass';
+        detail = 'All checks passed';
+      }
+    }
+
+    return { ...item, status, detail };
+  });
+
+  const passCount = items.filter(i => i.status === 'pass').length;
+  const failCount = items.filter(i => i.status === 'fail').length;
+  const warnCount = items.filter(i => i.status === 'warn').length;
+  const statusIcon = { pass: '✅', fail: '❌', warn: '⚠️', loading: '⏳' };
+  const statusColor = { pass: '#16a34a', fail: '#dc2626', warn: '#ca8a04', loading: '#94a3b8' };
+
+  // Group items by status for the PDF table
+  const failItems = items.filter(i => i.status === 'fail');
+  const warnItems = items.filter(i => i.status === 'warn');
+  const passItems = items.filter(i => i.status === 'pass');
+
+  function renderPDFChecklistRow(item) {
+    const rules = (item.axePass || []).map(r => {
+      const isFailing = issueIds.has(r);
+      return `<span style="display:inline-block;padding:1px 6px;border-radius:3px;font-size:9px;font-weight:600;margin:1px;background:${isFailing ? '#fef2f2' : '#f0fdf4'};color:${isFailing ? '#dc2626' : '#16a34a'};">${escapeHtml(r)}</span>`;
+    }).join('');
+
+    return `
+      <tr style="border-bottom:1px solid #f1f5f9;">
+        <td style="padding:8px 12px;text-align:center;font-size:16px;">${statusIcon[item.status] || '—'}</td>
+        <td style="padding:8px 12px;">
+          <div style="font-weight:600;color:#1e293b;">${escapeHtml(item.label)}</div>
+          <div style="font-size:10px;color:#94a3b8;margin-top:2px;">${escapeHtml(item.desc)}</div>
+        </td>
+        <td style="padding:8px 12px;color:${statusColor[item.status]};font-size:11px;font-weight:500;">${escapeHtml(item.detail)}</td>
+        <td style="padding:8px 12px;">${rules || '<span style="color:#94a3b8;font-size:10px;">—</span>'}</td>
+      </tr>`;
+  }
+
+  function renderPDFSectionHeader(label, count, color, bgColor) {
+    return `
+      <tr><td colspan="4" style="padding:10px 12px 4px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:${color};background:${bgColor};border-bottom:2px solid ${color}20;">
+        <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};margin-right:6px;vertical-align:middle;"></span>
+        ${label} <span style="font-weight:400;color:#94a3b8;margin-left:4px;">(${count})</span>
+      </td></tr>`;
+  }
+
+  return `
+    <h2 class="page-break">✅ WCAG Compliance Checklist <span class="count">(${passCount}/${items.length} passed)</span></h2>
+    <div style="display:grid;grid-template-columns:1fr 1fr ${warnCount > 0 ? '1fr' : ''};gap:4px;margin-bottom:16px;">
+      <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 14px;text-align:center;">
+        <div style="font-size:22px;font-weight:800;color:#dc2626;">${failCount}</div>
+        <div style="font-size:10px;color:#f87171;font-weight:600;text-transform:uppercase;">Failing</div>
+      </div>
+      ${warnCount > 0 ? `<div style="background:#fefce8;border:1px solid #fef08a;border-radius:8px;padding:10px 14px;text-align:center;">
+        <div style="font-size:22px;font-weight:800;color:#ca8a04;">${warnCount}</div>
+        <div style="font-size:10px;color:#eab308;font-weight:600;text-transform:uppercase;">Warnings</div>
+      </div>` : ''}
+      <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 14px;text-align:center;">
+        <div style="font-size:22px;font-weight:800;color:#16a34a;">${passCount}</div>
+        <div style="font-size:10px;color:#4ade80;font-weight:600;text-transform:uppercase;">Passing</div>
+      </div>
+    </div>
+    <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:24px;">
+      <thead>
+        <tr style="background:#f8fafc;border-bottom:2px solid #e2e8f0;">
+          <th style="padding:8px 12px;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:#94a3b8;width:50px;">Status</th>
+          <th style="padding:8px 12px;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:#94a3b8;">Check</th>
+          <th style="padding:8px 12px;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:#94a3b8;">Details</th>
+          <th style="padding:8px 12px;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:#94a3b8;">Rules</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${failItems.length ? renderPDFSectionHeader('Needs Attention', failItems.length, '#dc2626', '#fef2f2') + failItems.map(renderPDFChecklistRow).join('') : ''}
+        ${warnItems.length ? renderPDFSectionHeader('Warnings', warnItems.length, '#ca8a04', '#fefce8') + warnItems.map(renderPDFChecklistRow).join('') : ''}
+        ${passItems.length ? renderPDFSectionHeader('Passed', passItems.length, '#16a34a', '#f0fdf4') + passItems.map(renderPDFChecklistRow).join('') : ''}
+      </tbody>
+    </table>`;
+}
+
+/**
+ * Generate Lighthouse scores section for the PDF report
+ */
+function generateLighthouseReportSection() {
+  if (!lighthouseData || lighthouseData.error) {
+    return `
+    <h2>📊 Lighthouse Scores</h2>
+    <div style="padding:16px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;color:#94a3b8;font-size:13px;text-align:center;">
+      ${lighthouseData?.error ? escapeHtml(lighthouseData.error) : 'Lighthouse scores were not available for this scan.'}
+    </div>`;
+  }
+
+  const categories = [
+    { key: 'performance', label: 'Performance', icon: '⚡' },
+    { key: 'accessibility', label: 'Accessibility', icon: '♿' },
+    { key: 'bestPractices', label: 'Best Practices', icon: '✅' },
+    { key: 'seo', label: 'SEO', icon: '🔍' }
+  ];
+
+  return `
+    <h2>📊 Lighthouse Scores (via PageSpeed Insights)</h2>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:10px;margin-bottom:24px;">
+      ${categories.map(cat => {
+        const val = lighthouseData[cat.key] ?? '—';
+        const numVal = typeof val === 'number' ? val : 0;
+        const color = numVal >= 90 ? '#16a34a' : numVal >= 50 ? '#ca8a04' : '#dc2626';
+        const bg = numVal >= 90 ? '#f0fdf4' : numVal >= 50 ? '#fefce8' : '#fef2f2';
+        const borderColor = numVal >= 90 ? '#bbf7d0' : numVal >= 50 ? '#fef08a' : '#fecaca';
+        return `
+      <div style="text-align:center;padding:16px 8px;background:${bg};border:1px solid ${borderColor};border-radius:10px;">
+        <div style="font-size:18px;margin-bottom:6px;">${cat.icon}</div>
+        <div style="font-size:28px;font-weight:800;color:${color};">${val}</div>
+        <div style="font-size:10px;color:#94a3b8;font-weight:600;text-transform:uppercase;margin-top:4px;">${cat.label}</div>
+      </div>`;
+      }).join('')}
+    </div>`;
 }
 
 function downloadFile(content, filename, type) {
@@ -1001,13 +1522,13 @@ async function copyReportToClipboard(analysis) {
     text += '\n';
   });
 
-  text += `\n— Generated by Vation Agent`;
+  text += `\n— Generated by Accea Agent`;
 
   try {
     await navigator.clipboard.writeText(text);
-    showToast('📎 Report copied to clipboard!');
+    showToast('Report copied to clipboard');
   } catch {
-    showToast('⚠️ Failed to copy');
+    showToast('Failed to copy');
   }
 }
 
@@ -1167,20 +1688,20 @@ const ISSUE_IMPACT_MAP = {
 
 /** General SEO tips that always apply */
 const GENERAL_SEO_TIPS = [
-  { icon: '📝', title: 'Add meta description', desc: 'Add <meta name="description"> (150-160 chars) — appears in Google search snippets', tags: ['seo'], impact: 'high' },
-  { icon: '🔗', title: 'Add canonical URL', desc: 'Add <link rel="canonical"> to prevent duplicate content issues', tags: ['seo'], impact: 'medium' },
-  { icon: '📱', title: 'Open Graph tags', desc: 'Add og:title, og:description, og:image for rich social media previews', tags: ['seo'], impact: 'medium' },
-  { icon: '📊', title: 'Structured data (JSON-LD)', desc: 'Add Schema.org structured data for rich search results (stars, FAQs, etc.)', tags: ['seo'], impact: 'high' },
-  { icon: '⚡', title: 'Core Web Vitals', desc: 'LCP < 2.5s, INP < 200ms, CLS < 0.1 — these are Google ranking signals', tags: ['lighthouse', 'seo'], impact: 'high' },
-  { icon: '📱', title: 'Mobile responsiveness', desc: 'Use responsive meta viewport, fluid layouts, and media queries — mobile-first indexing is default', tags: ['lighthouse', 'seo'], impact: 'high' },
-  { icon: '🖼️', title: 'Lazy load images & iframes', desc: 'Add loading="lazy" to offscreen images/iframes — reduces initial load time and LCP', tags: ['lighthouse'], impact: 'high' },
-  { icon: '🎯', title: 'Responsive images', desc: 'Use srcset + sizes for art-directed images — serve right size for each screen width', tags: ['lighthouse'], impact: 'medium' },
+  { icon: '●', title: 'Add meta description', desc: 'Add <meta name="description"> (150-160 chars) — appears in Google search snippets', tags: ['seo'], impact: 'high' },
+  { icon: '●', title: 'Add canonical URL', desc: 'Add <link rel="canonical"> to prevent duplicate content issues', tags: ['seo'], impact: 'medium' },
+  { icon: '●', title: 'Open Graph tags', desc: 'Add og:title, og:description, og:image for rich social media previews', tags: ['seo'], impact: 'medium' },
+  { icon: '●', title: 'Structured data (JSON-LD)', desc: 'Add Schema.org structured data for rich search results (stars, FAQs, etc.)', tags: ['seo'], impact: 'high' },
+  { icon: '●', title: 'Core Web Vitals', desc: 'LCP < 2.5s, INP < 200ms, CLS < 0.1 — these are Google ranking signals', tags: ['lighthouse', 'seo'], impact: 'high' },
+  { icon: '●', title: 'Mobile responsiveness', desc: 'Use responsive meta viewport, fluid layouts, and media queries — mobile-first indexing is default', tags: ['lighthouse', 'seo'], impact: 'high' },
+  { icon: '●', title: 'Lazy load images & iframes', desc: 'Add loading="lazy" to offscreen images/iframes — reduces initial load time and LCP', tags: ['lighthouse'], impact: 'high' },
+  { icon: '●', title: 'Responsive images', desc: 'Use srcset + sizes for art-directed images — serve right size for each screen width', tags: ['lighthouse'], impact: 'medium' },
 ];
 
 function renderTips() {
   if (!currentAnalysis || !currentAnalysis.issues) {
     els.tipsEmpty.classList.remove('hidden');
-    els.lighthouseEstimate.classList.add('hidden');
+    els.lighthouseSection.classList.add('hidden');
     els.quickWins.classList.add('hidden');
     els.seoCrossover.classList.add('hidden');
     els.improvementInsights.classList.add('hidden');
@@ -1193,8 +1714,8 @@ function renderTips() {
   const score = currentAnalysis.auditScore || 0;
   const issueIds = issues.map(i => i.id);
 
-  // ── 1. Lighthouse Score Estimate ──
-  renderLighthouseEstimate(score, issues);
+  // ── 1. Lighthouse Scores (real or loading) ──
+  renderLighthouseSection();
 
   // ── 2. Quick Wins ──
   renderQuickWins(issues);
@@ -1206,49 +1727,296 @@ function renderTips() {
   renderImprovementInsights(issues, score);
 }
 
-function renderLighthouseEstimate(score, issues) {
-  const lhA11y = Math.min(100, Math.max(0, score + Math.floor(Math.random() * 5) - 2));
+/* ═══════ Real Lighthouse Scores ═══════ */
 
-  // Estimate SEO impact from current issues
-  let seoDeductions = 0;
-  issues.forEach(i => {
-    const impact = ISSUE_IMPACT_MAP[i.id];
-    if (impact?.seo && impact.seoImpact === 'high') seoDeductions += 8;
-    else if (impact?.seo && impact.seoImpact === 'medium') seoDeductions += 4;
-  });
-  const lhSEO = Math.min(100, Math.max(40, 92 - seoDeductions));
+/**
+ * Kick off Lighthouse fetching via the service worker (survives popup close/reopen).
+ * If the service worker already has fresh cached data it returns it instantly.
+ * Otherwise the SW fetches in background and pushes `lighthouse-ready` back to us.
+ */
+async function fetchLighthouseScores() {
+  lighthouseLoading = true;
+  lighthouseData = null;
 
-  // Best practices — rough estimate from issue types
-  const ariaIssues = issues.filter(i => i.id?.startsWith('aria-') || i.id === 'duplicate-id').length;
-  const lhBP = Math.min(100, Math.max(50, 95 - ariaIssues * 3));
+  // Show skeleton loaders immediately
+  renderLighthouseSection();
+  renderChecklistLighthouse();
 
-  const bars = [
-    { label: 'Accessibility', score: lhA11y },
-    { label: 'SEO', score: lhSEO },
-    { label: 'Best Practices', score: lhBP },
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const pageUrl = tab?.url;
+
+    if (!pageUrl || pageUrl.startsWith('chrome://') || pageUrl.startsWith('chrome-extension://') ||
+        pageUrl.startsWith('about:') || pageUrl.startsWith('file:')) {
+      lighthouseLoading = false;
+      lighthouseData = { error: 'Cannot analyze internal pages' };
+      renderLighthouseSection();
+      renderChecklistLighthouse();
+      return;
+    }
+
+    // Ask service worker — responds immediately with cache hit OR 'fetching'
+    // (SW never blocks on the network; it pushes `lighthouse-ready` when done)
+    const result = await sendMessage({ action: 'fetch-lighthouse', url: pageUrl });
+
+    if (result?.status === 'ready' && result.data) {
+      // Cache hit — instant result
+      lighthouseLoading = false;
+      lighthouseData = result.data;
+      els.lhLoadingHint?.classList.add('hidden');
+      renderLighthouseSection();
+      renderChecklistLighthouse();
+      upgradeScoreCardWithLighthouse();
+      return; // done
+    }
+
+    if (result?.status === 'error') {
+      lighthouseLoading = false;
+      lighthouseData = { error: result.error };
+      els.lhLoadingHint?.classList.add('hidden');
+      renderLighthouseSection();
+      renderChecklistLighthouse();
+      return;
+    }
+
+    // status === 'fetching' — SW is working, we wait for the `lighthouse-ready` push.
+    // As a belt-and-suspenders fallback, poll the cache every 3s (handles the case
+    // where the push message is dropped because the popup was briefly closed).
+    let pollCount = 0;
+    const pollTimer = setInterval(async () => {
+      pollCount++;
+      if (!lighthouseLoading) { clearInterval(pollTimer); return; } // push already arrived
+      const polled = await sendMessage({ action: 'get-lighthouse', url: pageUrl });
+      if (polled?.status === 'ready' && polled.data) {
+        clearInterval(pollTimer);
+        lighthouseLoading = false;
+        lighthouseData = polled.data;
+        els.lhLoadingHint?.classList.add('hidden');
+        renderLighthouseSection();
+        renderChecklistLighthouse();
+        upgradeScoreCardWithLighthouse();
+      } else if (pollCount >= 40) { // 40 × 3s = 2 min max wait
+        clearInterval(pollTimer);
+        lighthouseLoading = false;
+        lighthouseData = { error: 'Timed out waiting for Lighthouse' };
+        els.lhLoadingHint?.classList.add('hidden');
+        renderLighthouseSection();
+        renderChecklistLighthouse();
+      }
+    }, 3000);
+
+    // Show "still loading" hint after 30s
+    setTimeout(() => {
+      if (lighthouseLoading && els.lhLoadingHint) {
+        els.lhLoadingHint.innerHTML = '<span class="lh-pulse"></span> Still fetching Lighthouse — large pages take longer…';
+      }
+    }, 30000);
+  } catch (e) {
+    console.warn('fetchLighthouseScores error:', e.message);
+    lighthouseLoading = false;
+    lighthouseData = { error: e.message };
+    els.lhLoadingHint?.classList.add('hidden');
+    renderLighthouseSection();
+    renderChecklistLighthouse();
+  }
+}
+
+/**
+ * Render Lighthouse section — skeleton while loading, real data when available
+ */
+function renderLighthouseSection() {
+  els.lighthouseSection.classList.remove('hidden');
+
+  if (lighthouseLoading) {
+    // Skeleton loaders
+    els.lhStatus.textContent = 'Loading…';
+    els.lhStatus.className = 'status-pill loading';
+    els.lighthouseScores.innerHTML = buildLighthouseSkeletons();
+    return;
+  }
+
+  if (!lighthouseData || lighthouseData.error) {
+    const errMsg = lighthouseData?.error || 'Could not fetch Lighthouse data';
+    const isRateLimit = errMsg.toLowerCase().includes('rate limit') || errMsg.includes('429');
+    els.lhStatus.textContent = isRateLimit ? 'Rate Limited' : 'Error';
+    els.lhStatus.className = 'status-pill error';
+    els.lighthouseScores.innerHTML = `<div class="lh-error">${escapeHtml(errMsg)}</div>`;
+    return;
+  }
+
+  els.lhStatus.textContent = 'Live';
+  els.lhStatus.className = 'status-pill live';
+
+  const scores = [
+    { label: 'Performance', score: lighthouseData.performance },
+    { label: 'Accessibility', score: lighthouseData.accessibility },
+    { label: 'Best Practices', score: lighthouseData.bestPractices },
+    { label: 'SEO', score: lighthouseData.seo },
   ];
 
-  els.lighthouseBars.innerHTML = bars.map(b => {
-    const colorClass = b.score >= 90 ? 'green' : b.score >= 50 ? 'orange' : 'red';
+  els.lighthouseScores.innerHTML = scores.map((s, i) => {
+    const colorClass = s.score >= 90 ? 'green' : s.score >= 50 ? 'orange' : 'red';
     return `
-      <div class="lh-bar-row">
-        <span class="lh-bar-label">${b.label}</span>
-        <div class="lh-bar-track">
-          <div class="lh-bar-fill ${colorClass}" style="width: 0%"></div>
+      <div class="lh-score-card" style="animation-delay:${i * 0.08}s">
+        <div class="lh-score-ring ${colorClass}">
+          <svg viewBox="0 0 36 36" class="lh-ring-svg">
+            <path class="lh-ring-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"/>
+            <path class="lh-ring-fg ${colorClass}" stroke-dasharray="0, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" data-score="${s.score}"/>
+          </svg>
+          <span class="lh-ring-number">${s.score}</span>
         </div>
-        <span class="lh-bar-score ${colorClass}">${b.score}</span>
+        <div class="lh-score-label">${s.label}</div>
       </div>
     `;
   }).join('');
 
-  // Animate bars after render
+  // Animate rings after render
   setTimeout(() => {
-    els.lighthouseBars.querySelectorAll('.lh-bar-fill').forEach((fill, idx) => {
-      fill.style.width = `${bars[idx].score}%`;
+    els.lighthouseScores.querySelectorAll('.lh-ring-fg').forEach(ring => {
+      const score = ring.dataset.score;
+      ring.setAttribute('stroke-dasharray', `${score}, 100`);
     });
   }, 50);
+}
 
-  els.lighthouseEstimate.classList.remove('hidden');
+function buildLighthouseSkeletons() {
+  return ['Performance', 'Accessibility', 'Best Practices', 'SEO'].map((label, i) => `
+    <div class="lh-score-card skeleton" style="animation-delay:${i * 0.1}s">
+      <div class="lh-score-ring skeleton-ring">
+        <div class="lh-skeleton-circle"></div>
+      </div>
+      <div class="lh-score-label">${label}</div>
+    </div>
+  `).join('');
+}
+
+/**
+ * Upgrade the main score card with real Lighthouse accessibility score.
+ * Called after fetchLighthouseScores() completes successfully.
+ * Falls back gracefully — if Lighthouse failed, the axe-core score stays.
+ */
+function upgradeScoreCardWithLighthouse() {
+  if (!lighthouseData || lighthouseData.error) return;
+
+  const lhScore = lighthouseData.accessibility;
+  if (typeof lhScore !== 'number' || lhScore < 0) return;
+
+  // Only upgrade if the score card is visible (a scan has been run)
+  if (els.scoreCard.classList.contains('hidden')) return;
+
+  const currentScore = parseInt(els.scoreNumber.textContent, 10) || 0;
+
+  // Animate from current axe-core score to Lighthouse score
+  animateCounter(els.scoreNumber, currentScore, lhScore, 600);
+
+  // Update ring
+  setTimeout(() => {
+    els.scoreArc.setAttribute('stroke-dasharray', `${lhScore}, 100`);
+  }, 50);
+
+  // Update ring color
+  if (lhScore >= 90) els.scoreArc.style.stroke = 'var(--green)';
+  else if (lhScore >= 50) els.scoreArc.style.stroke = 'var(--orange)';
+  else els.scoreArc.style.stroke = 'var(--red)';
+
+  // Update grade
+  const grade = getGrade(lhScore);
+  els.scoreGrade.textContent = grade.label;
+  els.scoreGrade.className = `score-grade ${grade.class}`;
+
+  // Update compliance status based on Lighthouse score
+  const counts = currentAnalysis?.counts || {};
+  const hasCriticals = (counts.critical || 0) > 0;
+  let status;
+  if (lhScore >= 90 && !hasCriticals) status = 'Compliant';
+  else if (lhScore >= 70) status = 'At Risk';
+  else status = 'Not Compliant';
+  els.scoreStatus.textContent = status;
+  els.scoreStatus.className = 'score-status ' + status.toLowerCase().replace(/\s+/g, '-');
+
+  // Update source badge to Lighthouse
+  els.scoreSource.textContent = '✦ Lighthouse';
+  els.scoreSource.className = 'score-source lighthouse';
+  els.scoreSource.title = 'Google Lighthouse accessibility score via PageSpeed Insights API';
+
+  // Update attribution line — loading done
+  els.lhLoadingHint.classList.add('hidden');
+
+  // Refresh breakdown panel with Lighthouse data
+  const axeScore = currentAnalysis?.auditScore || 0;
+  renderScoreBreakdown(axeScore, lighthouseData);
+
+  // If panel is already open keep it; if user hasn't touched it, re-open briefly
+  if (!_breakdownUserTouched) {
+    autoOpenScoreBreakdown();
+  }
+
+  // Brief flash animation to draw attention to the upgrade
+  els.scoreCard.classList.add('score-upgraded');
+  setTimeout(() => els.scoreCard.classList.remove('score-upgraded'), 1200);
+}
+
+/**
+ * Render the expandable score breakdown panel.
+ * Shows Accea (axe-core) weighted score + Lighthouse benchmark scores.
+ */
+function renderScoreBreakdown(axeScore, lhData) {
+  const rows = [];
+
+  // 1. Accea Score (axe-core weighted)
+  rows.push(buildBreakdownRow(
+    'Accea Score', axeScore,
+    'axe-core', 'Severity-weighted: each rule scored out of 10. Critical costs 10pts, Serious 5, Moderate 2, Minor 1.'
+  ));
+
+  // 2. Lighthouse scores
+  if (lhData && !lhData.error) {
+    rows.push(buildBreakdownRow('Lighthouse A11y', lhData.accessibility, 'Google PageSpeed', 'Real Lighthouse accessibility audit via PageSpeed Insights API (mobile).' ));
+    rows.push(buildBreakdownRow('Performance',     lhData.performance,   'Lighthouse',       'Load speed, interactivity &amp; visual stability (Core Web Vitals).'));
+    rows.push(buildBreakdownRow('Best Practices',  lhData.bestPractices, 'Lighthouse',       'HTTPS, no console errors, correct image ratios, modern APIs.'));
+    rows.push(buildBreakdownRow('SEO',             lhData.seo,           'Lighthouse',       'Meta tags, crawlable links, font sizes, tap target sizing.'));
+  } else if (lhData?.error) {
+    rows.push(`<div class="breakdown-row loading-row"><span class="breakdown-label">Lighthouse</span><span class="breakdown-loading breakdown-error">Unavailable — ${escapeHtml(lhData.error)}</span></div>`);
+  } else {
+    rows.push(`<div class="breakdown-row loading-row"><span class="breakdown-label">Lighthouse</span><span class="breakdown-loading"><span class="lh-pulse-sm"></span> Loading — may take 30–60s</span></div>`);
+  }
+
+  // 3. WCAG compliance hint
+  const wcagLevel = axeScore >= 90 ? 'WCAG 2.1 AA — Likely Compliant' : axeScore >= 70 ? 'WCAG 2.1 AA — Partial' : 'WCAG 2.1 AA — Needs Work';
+  const wcagClass = axeScore >= 90 ? 'green' : axeScore >= 70 ? 'orange' : 'red';
+  rows.push(`<div class="breakdown-row wcag-row"><span class="breakdown-label">WCAG Level</span><span class="breakdown-wcag ${wcagClass}">${wcagLevel}</span></div>`);
+
+  // 4. Formula explanation — always visible at the bottom of the panel
+  rows.push(`
+    <div class="breakdown-formula">
+      <div class="formula-title">ℹ️ How Accea Score is calculated</div>
+      <div class="formula-line"><span class="formula-code">Score = earned ÷ possible × 100</span></div>
+      <div class="formula-detail">Each rule contributes 10pts max. Violations lose points by severity:</div>
+      <div class="formula-chips">
+        <span class="fchip critical">Critical −8</span>
+        <span class="fchip serious">Serious −5</span>
+        <span class="fchip moderate">Moderate −2</span>
+        <span class="fchip minor">Minor −1</span>
+      </div>
+      <div class="formula-detail">Incomplete/needs-review items are <em>not</em> penalised.</div>
+    </div>`);
+
+  els.breakdownRows.innerHTML = rows.join('');
+}
+
+function buildBreakdownRow(label, score, source, tooltip) {
+  const colorClass = score >= 90 ? 'green' : score >= 50 ? 'orange' : 'red';
+  return `
+    <div class="breakdown-row">
+      <div class="breakdown-label-wrap">
+        <span class="breakdown-label">${label}</span>
+        <span class="breakdown-src">${source}</span>
+      </div>
+      <div class="breakdown-bar-wrap">
+        <div class="breakdown-bar ${colorClass}" style="width:${score}%"></div>
+      </div>
+      <span class="breakdown-score ${colorClass}">${score}</span>
+    </div>`;
 }
 
 function renderQuickWins(issues) {
@@ -1259,7 +2027,7 @@ function renderQuickWins(issues) {
     if (!impact?.quickWin) return;
 
     wins.push({
-      icon: impact.seo ? '🎯' : '⚡',
+      icon: impact.seo ? '●' : '○',
       title: issue.title || issue.id,
       fix: impact.fix,
       effort: impact.effort,
@@ -1305,7 +2073,7 @@ function renderSEOCrossover(issues) {
     if (!impact?.seo) return;
 
     seoIssues.push({
-      icon: impact.seoImpact === 'high' ? '🔴' : impact.seoImpact === 'medium' ? '🟡' : '🟢',
+      icon: impact.seoImpact === 'high' ? '●' : impact.seoImpact === 'medium' ? '◐' : '○',
       title: issue.title || issue.id,
       reason: impact.seoReason,
       impact: impact.seoImpact,
@@ -1356,7 +2124,7 @@ function renderImprovementInsights(issues, score) {
   if (counts.critical > 0) {
     const potentialScore = Math.min(100, score + counts.critical * 12);
     insights.push({
-      icon: '🚨',
+      icon: '⚠',
       title: `Fix ${counts.critical} critical issue${counts.critical > 1 ? 's' : ''}`,
       desc: `Score would jump from ${score} → ~${potentialScore}. Critical issues block compliance and can trigger legal risk (ADA Title III).`,
       tags: [{ text: `+${potentialScore - score} pts`, class: 'a11y' }, { text: 'HIGH PRIORITY', class: 'effort-l' }]
@@ -1367,7 +2135,7 @@ function renderImprovementInsights(issues, score) {
   const seoIssueCount = issues.filter(i => ISSUE_IMPACT_MAP[i.id]?.seo).length;
   if (seoIssueCount > 0) {
     insights.push({
-      icon: '🔍',
+      icon: '●',
       title: `${seoIssueCount} issues also hurt SEO`,
       desc: `Fixing these accessibility issues will simultaneously improve your Google search ranking signals. Two-for-one impact.`,
       tags: [{ text: 'SEO + A11y', class: 'seo' }, { text: `${seoIssueCount} issues`, class: 'lighthouse' }]
@@ -1382,7 +2150,7 @@ function renderImprovementInsights(issues, score) {
   }, 0);
   if (quickFixableCount > 0) {
     insights.push({
-      icon: '⚡',
+      icon: '▸',
       title: `${quickFixableCount} issues fixable in ~${quickFixTime} minutes`,
       desc: `These are low-effort fixes that collectively have the biggest impact on your scores. Start here.`,
       tags: [{ text: `~${quickFixTime}min`, class: 'effort-s' }, { text: `${quickFixableCount} fixes`, class: 'lighthouse' }]
@@ -1392,7 +2160,7 @@ function renderImprovementInsights(issues, score) {
   // Heading structure insight
   if (issueIds.includes('heading-order') || issueIds.includes('empty-heading')) {
     insights.push({
-      icon: '📑',
+      icon: '▸',
       title: 'Heading structure needs work',
       desc: 'Fixing heading hierarchy improves both SEO content signals and screen reader navigation. Use one h1, then h2→h3 sequentially.',
       tags: [{ text: 'A11y', class: 'a11y' }, { text: 'SEO', class: 'seo' }]
@@ -1403,7 +2171,7 @@ function renderImprovementInsights(issues, score) {
   const ariaIssues = issues.filter(i => i.id?.startsWith('aria-'));
   if (ariaIssues.length > 0) {
     insights.push({
-      icon: '🏷️',
+      icon: '▸',
       title: `${ariaIssues.length} ARIA issue${ariaIssues.length > 1 ? 's' : ''} detected`,
       desc: 'Invalid ARIA is worse than no ARIA — it actively misleads assistive technology. Fix or remove these attributes.',
       tags: [{ text: 'A11y', class: 'a11y' }, { text: 'Best Practices', class: 'lighthouse' }]
@@ -1415,7 +2183,7 @@ function renderImprovementInsights(issues, score) {
     const contrastIssue = issues.find(i => i.id === 'color-contrast');
     const elemCount = contrastIssue?.elementCount || 0;
     insights.push({
-      icon: '🎨',
+      icon: '●',
       title: `Color contrast fails on ${elemCount} element${elemCount !== 1 ? 's' : ''}`,
       desc: 'Low contrast affects 8% of men (color blindness) and everyone in bright sunlight. Fix text to ≥4.5:1 ratio. This also reduces bounce rate — an indirect SEO signal.',
       tags: [{ text: 'A11y', class: 'a11y' }, { text: `${elemCount} elements`, class: 'effort-m' }]
@@ -1425,7 +2193,7 @@ function renderImprovementInsights(issues, score) {
   // Perfect score encouragement
   if (score >= 90 && issues.length <= 3) {
     insights.push({
-      icon: '🏆',
+      icon: '★',
       title: 'Almost perfect! Just a few tweaks away',
       desc: `You're ${100 - score} points from a perfect 100. Fix the remaining ${issues.length} issue${issues.length !== 1 ? 's' : ''} for full compliance.`,
       tags: [{ text: 'NEARLY THERE', class: 'effort-s' }]
@@ -1452,6 +2220,275 @@ function renderImprovementInsights(issues, score) {
 
   els.improvementInsights.classList.remove('hidden');
 }
+
+/* ═══════ Quick Checklist Tab ═══════ */
+
+/**
+ * Essential web parameter checklist.
+ * Each item maps to axe rule IDs or is inferred from scan results.
+ */
+const CHECKLIST_ITEMS = [
+  { id: 'lang', label: 'Page Language (lang)', desc: '<html> has a valid lang attribute', icon: SVG.globe, axePass: ['html-has-lang', 'html-lang-valid'] },
+  { id: 'title', label: 'Page Title', desc: 'Page has a descriptive <title>', icon: '▪', axePass: ['document-title'] },
+  { id: 'viewport', label: 'Meta Viewport', desc: 'Viewport meta allows user zoom', icon: '▪', axePass: ['meta-viewport'] },
+  { id: 'images', label: 'Image Alt Text', desc: 'All images have descriptive alt', icon: '▪', axePass: ['image-alt', 'input-image-alt', 'svg-img-alt', 'role-img-alt'] },
+  { id: 'headings', label: 'Heading Structure', desc: 'Headings follow proper h1→h6 order', icon: '▪', axePass: ['heading-order', 'empty-heading', 'p-as-heading'] },
+  { id: 'contrast', label: 'Color Contrast', desc: 'Text meets WCAG 4.5:1 contrast ratio', icon: '▪', axePass: ['color-contrast'] },
+  { id: 'forms', label: 'Form Labels', desc: 'All form inputs have labels', icon: '▪', axePass: ['label', 'select-name', 'input-button-name'] },
+  { id: 'buttons', label: 'Button Names', desc: 'All buttons have accessible names', icon: '▪', axePass: ['button-name'] },
+  { id: 'links', label: 'Link Names', desc: 'All links have descriptive text', icon: '▪', axePass: ['link-name'] },
+  { id: 'landmarks', label: 'Landmarks', desc: 'Page uses <main>, <nav>, <header>, etc.', icon: '▪', axePass: ['landmark-one-main', 'region'] },
+  { id: 'aria', label: 'ARIA Usage', desc: 'ARIA attributes are valid and correct', icon: '▪', axePass: ['aria-allowed-attr', 'aria-valid-attr', 'aria-valid-attr-value', 'aria-required-attr', 'aria-roles', 'aria-required-children', 'aria-required-parent'] },
+  { id: 'keyboard', label: 'Keyboard Access', desc: 'All interactive elements are keyboard accessible', icon: '▪', axePass: ['keyboard', 'focus-visible', 'tabindex'] },
+  { id: 'skiplink', label: 'Skip Link', desc: 'Page has a "skip to content" link', icon: '▪', axePass: ['bypass'] },
+  { id: 'ids', label: 'Unique IDs', desc: 'No duplicate element IDs on the page', icon: '▪', axePass: ['duplicate-id', 'duplicate-id-active', 'duplicate-id-aria'] },
+  { id: 'mobile', label: 'Mobile Friendly', desc: 'Page works on mobile viewports', icon: '▪', special: 'mobile' },
+  { id: 'lighthouse', label: 'Lighthouse Score', desc: 'PageSpeed Insights performance & SEO', icon: '▪', special: 'lighthouse' },
+];
+
+function renderChecklist() {
+  if (!currentAnalysis || !currentAnalysis.issues) {
+    els.checklistEmpty.classList.remove('hidden');
+    els.checklistList.innerHTML = '';
+    els.checklistLighthouse.classList.add('hidden');
+    return;
+  }
+
+  els.checklistEmpty.classList.add('hidden');
+
+  const issues = currentAnalysis.issues || [];
+  const issueIds = new Set(issues.map(i => i.id));
+
+  const items = CHECKLIST_ITEMS.map(item => {
+    let status = 'pass'; // default pass
+    let detail = '';
+
+    if (item.special === 'mobile') {
+      // Mobile: check if meta-viewport issue exists
+      const vpIssue = issues.find(i => i.id === 'meta-viewport');
+      status = vpIssue ? 'fail' : 'pass';
+      detail = vpIssue ? 'Viewport blocks zoom or scaling' : 'Viewport allows user zoom';
+    } else if (item.special === 'lighthouse') {
+      if (lighthouseLoading) {
+        status = 'loading';
+        detail = 'Fetching from PageSpeed Insights…';
+      } else if (lighthouseData && !lighthouseData.error) {
+        const perfScore = lighthouseData.performance;
+        status = perfScore >= 50 ? 'pass' : 'fail';
+        detail = `Perf: ${lighthouseData.performance} · A11y: ${lighthouseData.accessibility} · SEO: ${lighthouseData.seo}`;
+      } else if (lighthouseData?.error) {
+        status = 'warn';
+        detail = lighthouseData.error;
+      } else {
+        status = 'loading';
+        detail = 'Waiting for scan…';
+      }
+    } else {
+      // Check if any of the associated axe rules failed
+      const failing = item.axePass.filter(ruleId => issueIds.has(ruleId));
+      if (failing.length > 0) {
+        status = 'fail';
+        const failIssues = issues.filter(i => failing.includes(i.id));
+        const totalElements = failIssues.reduce((s, i) => s + (i.elementCount || 0), 0);
+        detail = `${failing.length} rule${failing.length > 1 ? 's' : ''} failing` + (totalElements > 0 ? ` · ${totalElements} element${totalElements > 1 ? 's' : ''}` : '');
+      } else {
+        detail = 'All checks passed';
+      }
+    }
+
+    return { ...item, status, detail, failingRules: item.axePass || [] };
+  });
+
+  const passCount = items.filter(i => i.status === 'pass').length;
+  const failCount = items.filter(i => i.status === 'fail').length;
+
+  // Build detail HTML for a single checklist item
+  function buildItemDetailHTML(item) {
+    const failingRules = (item.axePass || []).filter(r => issueIds.has(r));
+    const passingRules = (item.axePass || []).filter(r => !issueIds.has(r));
+    const failIssues = issues.filter(i => failingRules.includes(i.id));
+    const totalElements = failIssues.reduce((s, i) => s + (i.elementCount || 0), 0);
+
+    if (item.special === 'lighthouse') {
+      if (lighthouseData && !lighthouseData.error) {
+        return `
+          <div class="checklist-detail-row"><span class="checklist-detail-label">Scores</span><span class="checklist-detail-value">Performance: ${lighthouseData.performance} · Accessibility: ${lighthouseData.accessibility} · Best Practices: ${lighthouseData.bestPractices} · SEO: ${lighthouseData.seo}</span></div>
+          <div class="checklist-detail-tip">💡 Lighthouse scores are fetched from Google PageSpeed Insights API. Scores above 90 are considered good.</div>`;
+      }
+      return `<div class="checklist-detail-tip">💡 Lighthouse scores are fetched after scan from Google PageSpeed Insights. Make sure the page is publicly accessible.</div>`;
+    }
+    if (item.special === 'mobile') {
+      return `
+        <div class="checklist-detail-row"><span class="checklist-detail-label">Check</span><span class="checklist-detail-value">Verifies &lt;meta name="viewport"&gt; allows user zoom and doesn't set maximum-scale=1</span></div>
+        <div class="checklist-detail-tip">💡 Users with low vision rely on pinch-to-zoom. Ensure <code>user-scalable=no</code> is not set.</div>`;
+    }
+    const rulesHTML = [
+      ...failingRules.map(r => `<span class="checklist-rule-tag">${escapeHtml(r)}</span>`),
+      ...passingRules.map(r => `<span class="checklist-rule-tag passing">${escapeHtml(r)}</span>`)
+    ].join('');
+    return `
+      <div class="checklist-detail-row"><span class="checklist-detail-label">About</span><span class="checklist-detail-value">${escapeHtml(item.desc)}</span></div>
+      ${totalElements > 0 ? `<div class="checklist-detail-row"><span class="checklist-detail-label">Impact</span><span class="checklist-detail-value">${failingRules.length} rule${failingRules.length > 1 ? 's' : ''} failing · ${totalElements} element${totalElements > 1 ? 's' : ''} affected</span></div>` : ''}
+      <div class="checklist-detail-row"><span class="checklist-detail-label">Rules</span><span class="checklist-detail-value"><div class="checklist-detail-rules">${rulesHTML}</div></span></div>
+      ${item.status === 'fail' ? `<div class="checklist-detail-tip">💡 Switch to the Issues tab and filter by these rules to see affected elements and get AI fix suggestions.</div>` : `<div class="checklist-detail-tip">✅ All related axe-core rules are passing for this check.</div>`}`;
+  }
+
+  // Render a single checklist item card
+  function renderChecklistCard(item, idx) {
+    return `
+    <div class="checklist-item ${item.status}" style="animation-delay:${idx * 0.03}s" data-checklist-id="${item.id}">
+      <div class="checklist-item-header">
+        <span class="checklist-icon">${item.icon}</span>
+        <div class="checklist-info">
+          <div class="checklist-label">${escapeHtml(item.label)}</div>
+          <div class="checklist-desc">${escapeHtml(item.detail || item.desc)}</div>
+        </div>
+        <span class="checklist-status-icon">${item.status === 'pass' ? SVG.checkCircle : item.status === 'fail' ? SVG.xCircle : item.status === 'warn' ? SVG.alertTriangle : '<span class="checklist-spinner"></span>'}</span>
+        <svg class="checklist-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+      </div>
+      <div class="checklist-detail">${buildItemDetailHTML(item)}</div>
+    </div>`;
+  }
+
+  // Group items by status
+  const failItems = items.filter(i => i.status === 'fail');
+  const warnItems = items.filter(i => i.status === 'warn');
+  const loadingItems = items.filter(i => i.status === 'loading');
+  const passItems = items.filter(i => i.status === 'pass');
+
+  let sectionsHTML = `
+    <div class="checklist-summary">
+      <span class="checklist-pass-count">${passCount}/${items.length} passed</span>
+      ${failCount > 0 ? `<span class="checklist-fail-count">${failCount} need attention</span>` : ''}
+    </div>`;
+
+  let globalIdx = 0;
+
+  if (failItems.length) {
+    sectionsHTML += `
+    <div class="checklist-section">
+      <div class="checklist-section-header fail">
+        <span class="checklist-section-dot"></span>
+        <span class="checklist-section-title">Needs Attention</span>
+        <span class="checklist-section-count">${failItems.length}</span>
+      </div>
+      <div class="checklist-section-items">
+        ${failItems.map(item => renderChecklistCard(item, globalIdx++)).join('')}
+      </div>
+    </div>`;
+  }
+
+  if (warnItems.length) {
+    sectionsHTML += `
+    <div class="checklist-section">
+      <div class="checklist-section-header warn">
+        <span class="checklist-section-dot"></span>
+        <span class="checklist-section-title">Warnings</span>
+        <span class="checklist-section-count">${warnItems.length}</span>
+      </div>
+      <div class="checklist-section-items">
+        ${warnItems.map(item => renderChecklistCard(item, globalIdx++)).join('')}
+      </div>
+    </div>`;
+  }
+
+  if (loadingItems.length) {
+    sectionsHTML += `
+    <div class="checklist-section">
+      <div class="checklist-section-header loading">
+        <span class="checklist-section-dot"></span>
+        <span class="checklist-section-title">Checking…</span>
+        <span class="checklist-section-count">${loadingItems.length}</span>
+      </div>
+      <div class="checklist-section-items">
+        ${loadingItems.map(item => renderChecklistCard(item, globalIdx++)).join('')}
+      </div>
+    </div>`;
+  }
+
+  if (passItems.length) {
+    sectionsHTML += `
+    <div class="checklist-section">
+      <div class="checklist-section-header pass">
+        <span class="checklist-section-dot"></span>
+        <span class="checklist-section-title">Passed</span>
+        <span class="checklist-section-count">${passItems.length}</span>
+      </div>
+      <div class="checklist-section-items">
+        ${passItems.map(item => renderChecklistCard(item, globalIdx++)).join('')}
+      </div>
+    </div>`;
+  }
+
+  els.checklistList.innerHTML = sectionsHTML;
+
+  // Add click handlers for expand/collapse
+  els.checklistList.querySelectorAll('.checklist-item').forEach(el => {
+    const header = el.querySelector('.checklist-item-header');
+    if (header) {
+      header.addEventListener('click', () => {
+        el.classList.toggle('expanded');
+      });
+    }
+  });
+
+  // Show Lighthouse scores at top of checklist if available
+  renderChecklistLighthouse();
+}
+
+/**
+ * Render mini Lighthouse score circles at top of checklist tab
+ */
+function renderChecklistLighthouse() {
+  if (lighthouseLoading) {
+    els.checklistLighthouse.classList.remove('hidden');
+    els.checklistLhScores.innerHTML = ['Perf', 'A11y', 'BP', 'SEO'].map((label, i) => `
+      <div class="cl-lh-card skeleton" style="animation-delay:${i * 0.08}s">
+        <div class="cl-lh-skeleton-circle"></div>
+        <div class="cl-lh-label">${label}</div>
+      </div>
+    `).join('');
+    return;
+  }
+
+  if (!lighthouseData || lighthouseData.error) {
+    els.checklistLighthouse.classList.add('hidden');
+    return;
+  }
+
+  els.checklistLighthouse.classList.remove('hidden');
+  const scores = [
+    { label: 'Perf', score: lighthouseData.performance },
+    { label: 'A11y', score: lighthouseData.accessibility },
+    { label: 'BP', score: lighthouseData.bestPractices },
+    { label: 'SEO', score: lighthouseData.seo },
+  ];
+
+  els.checklistLhScores.innerHTML = scores.map((s, i) => {
+    const colorClass = s.score >= 90 ? 'green' : s.score >= 50 ? 'orange' : 'red';
+    return `
+      <div class="cl-lh-card" style="animation-delay:${i * 0.08}s">
+        <div class="cl-lh-ring ${colorClass}">
+          <svg viewBox="0 0 36 36" class="cl-lh-svg">
+            <path class="cl-lh-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"/>
+            <path class="cl-lh-fg ${colorClass}" stroke-dasharray="0, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" data-score="${s.score}"/>
+          </svg>
+          <span class="cl-lh-num">${s.score}</span>
+        </div>
+        <div class="cl-lh-label">${s.label}</div>
+      </div>
+    `;
+  }).join('');
+
+  // Animate rings
+  setTimeout(() => {
+    els.checklistLhScores.querySelectorAll('.cl-lh-fg').forEach(ring => {
+      ring.setAttribute('stroke-dasharray', `${ring.dataset.score}, 100`);
+    });
+  }, 50);
+}
+
+/* ═══════ End Checklist ═══════ */
 
 /* ═══════ End Tips Engine ═══════ */
 
@@ -1529,6 +2566,7 @@ async function toggleHighlights() {
     highlightsActive = true;
     els.btnHighlight.textContent = '👁️ On';
     els.btnHighlight.classList.add('active');
+    els.btnHighlight.title = 'Highlights on — click to hide';
   }
 }
 
@@ -1537,6 +2575,7 @@ async function clearHighlights() {
   highlightsActive = false;
   els.btnHighlight.textContent = '👁️ Highlight';
   els.btnHighlight.classList.remove('active');
+  els.btnHighlight.title = 'Highlight issues on page';
 }
 
 /* ═══════ Settings ═══════ */
@@ -1560,6 +2599,7 @@ async function loadSettings() {
   els.settingServerUrl.value = response.localServerUrl || 'http://localhost:3000';
   els.settingAutoHighlight.checked = response.autoHighlight !== false;
   els.settingBadge.checked = response.showBadge !== false;
+  els.settingPsApiKey.value = response.pagespeedApiKey || '';
 
   if (els.settingPrivacy.checked) {
     els.settingCloud.disabled = true;
@@ -1574,7 +2614,8 @@ async function saveCurrentSettings() {
       cloudOptIn: els.settingCloud.checked,
       localServerUrl: els.settingServerUrl.value,
       autoHighlight: els.settingAutoHighlight.checked,
-      showBadge: els.settingBadge.checked
+      showBadge: els.settingBadge.checked,
+      pagespeedApiKey: (els.settingPsApiKey.value || '').trim()
     }
   });
 }
@@ -1582,6 +2623,7 @@ async function saveCurrentSettings() {
 /* ═══════ LLM capabilities ═══════ */
 
 async function detectCapabilities() {
+  els.capOverall.textContent = '…';
   els.capWindowAI.textContent = '…';
   els.capLocalhost.textContent = '…';
 
@@ -1597,8 +2639,7 @@ async function detectCapabilities() {
   }
 
   if (response.localhost) {
-    const model = response.localhostModel ? ` (${response.localhostModel})` : '';
-    els.capLocalhost.textContent = response.localhostLLM ? `✓ Connected${model}` : '⚠ No LLM';
+    els.capLocalhost.textContent = response.localhostLLM ? '✓ Connected' : '⚠ No AI engine';
     els.capLocalhost.className = response.localhostLLM ? 'cap-status ok' : 'cap-status partial';
   } else {
     els.capLocalhost.textContent = '✗ Offline';
@@ -1608,22 +2649,17 @@ async function detectCapabilities() {
   els.capCloud.textContent = els.settingCloud.checked ? '✓ Opted in' : '✗ Opted out';
   els.capCloud.className = els.settingCloud.checked ? 'cap-status ok' : 'cap-status no';
 
-  updateLLMStatusBar(response);
-}
-
-function updateLLMStatusBar(caps) {
-  els.llmStatus.classList.remove('hidden');
-  
-  if (caps.windowAI || (caps.localhost && caps.localhostLLM)) {
-    els.llmDot.className = 'llm-dot connected';
-    const source = caps.windowAI ? 'Gemini Nano' : `Ollama${caps.localhostModel ? ` (${caps.localhostModel})` : ''}`;
-    els.llmLabel.textContent = `🔒 Private AI: ${source}`;
-  } else if (caps.localhost) {
-    els.llmDot.className = 'llm-dot partial';
-    els.llmLabel.textContent = '⚠ Server connected, no LLM loaded';
+  // Overall AI status — green if any layer is available
+  const hasAI = response.windowAI || (response.localhost && response.localhostLLM) || els.settingCloud.checked;
+  if (hasAI) {
+    const source = response.windowAI ? 'Built-in AI'
+                 : (response.localhost && response.localhostLLM) ? 'Local Server'
+                 : 'Cloud';
+    els.capOverall.textContent = `✓ Available via ${source}`;
+    els.capOverall.className = 'cap-status ok';
   } else {
-    els.llmDot.className = 'llm-dot disconnected';
-    els.llmLabel.textContent = 'Rule-based fixes only (no LLM)';
+    els.capOverall.textContent = '✗ No AI engine found';
+    els.capOverall.className = 'cap-status no';
   }
 }
 

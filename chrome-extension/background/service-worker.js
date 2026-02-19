@@ -1,5 +1,5 @@
 /**
- * Vation Agent Chrome Extension — Service Worker (Background)
+ * Accea Agent Chrome Extension — Service Worker (Background)
  * 
  * Coordinates scanning, LLM routing, and messaging between popup
  * and content scripts. This is the central hub.
@@ -16,21 +16,31 @@ import { LLMRouter } from '../lib/llm-router.js';
 const llmRouter = new LLMRouter();
 
 /* ═══════════════════════════════════════════
+   Lighthouse cache  (tab URL → result)
+   ═══════════════════════════════════════════ */
+const lighthouseCache    = new Map(); // url → { data, fetchedAt }
+const lighthouseInFlight = new Set(); // urls currently being fetched
+const LIGHTHOUSE_TTL     = 5 * 60 * 1000; // 5 min
+
+/* ═══════════════════════════════════════════
    Message router — handles all message types
    ═══════════════════════════════════════════ */
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   const handlers = {
-    'scan':           () => handleScan(msg.tabId),
-    'fix':            () => handleFix(msg.issue, msg.pageUrl, msg.tabId),
-    'get-settings':   () => getSettings(),
-    'save-settings':  () => saveSettings(msg.settings),
-    'get-history':    () => getHistory(),
-    'clear-history':  () => clearHistory(),
-    'get-capabilities': () => llmRouter.detectCapabilities(),
-    'highlight':      () => sendToTab(msg.tabId, { type: 'highlight-issues', issues: msg.issues }),
-    'clear-highlights': () => sendToTab(msg.tabId, { type: 'clear-highlights' }),
-    'scroll-to':      () => sendToTab(msg.tabId, { type: 'scroll-to', selector: msg.selector }),
+    'scan':               () => handleScan(msg.tabId),
+    'fix':                () => handleFix(msg.issue, msg.pageUrl, msg.tabId),
+    'get-settings':       () => getSettings(),
+    'save-settings':      () => saveSettings(msg.settings),
+    'get-history':        () => getHistory(),
+    'clear-history':      () => clearHistory(),
+    'get-capabilities':   () => llmRouter.detectCapabilities(),
+    'highlight':          () => sendToTab(msg.tabId, { type: 'highlight-issues', issues: msg.issues }),
+    'clear-highlights':   () => sendToTab(msg.tabId, { type: 'clear-highlights' }),
+    'scroll-to':          () => sendToTab(msg.tabId, { type: 'scroll-to', selector: msg.selector }),
+    'spotlight':          () => sendToTab(msg.tabId, { type: 'spotlight', selector: msg.selector }),
+    'fetch-lighthouse':   () => handleFetchLighthouse(msg.url),
+    'get-lighthouse':     () => Promise.resolve(getLighthouseCache(msg.url)),
   };
 
   const handler = handlers[msg.action];
@@ -183,8 +193,24 @@ function normalizeAxeResults(raw) {
   const incomplete = (raw.incomplete || []).map(v => normalizeViolation(v, 'needs-review'));
 
   const passCount = raw.passes?.length || 0;
-  const totalRules = passCount + violations.length + incomplete.length;
-  const score = totalRules > 0 ? Math.round((passCount / totalRules) * 100) : 100;
+
+  // ── Score calculation (weighted penalty model) ──
+  // 1. Incomplete/needs-review items are NOT counted against the score.
+  // 2. Each violation carries a severity weight; each passing rule carries weight 1.
+  // 3. Score = passing_weight / total_weight × 100.
+  //    A failing rule contributes 0 earned weight (not partial credit).
+  //    A critical failure (weight 10) therefore hurts 10× more than a minor one (weight 1).
+  const severityWeight = { critical: 10, serious: 5, moderate: 2, minor: 1 };
+
+  // Weighted pool: passes contribute weight 1, violations contribute their severity weight.
+  const passWeight     = passCount;                                               // each pass = 1
+  const violationWeight = violations.reduce((s, v) => s + (severityWeight[v.severity] || severityWeight.moderate), 0);
+  const totalPossible  = passWeight + violationWeight;                            // total weight
+
+  // Only passing rules earn credit; failing rules earn 0.
+  const score = totalPossible > 0
+    ? Math.max(0, Math.min(100, Math.round((passWeight / totalPossible) * 100)))
+    : 100;
 
   const bySeverity = { critical: 0, serious: 0, moderate: 0, minor: 0 };
   violations.forEach(v => { bySeverity[v.severity] = (bySeverity[v.severity] || 0) + 1; });
@@ -198,7 +224,7 @@ function normalizeAxeResults(raw) {
       bySeverity
     },
     issues: [...violations, ...incomplete],
-    metadata: { axeVersion: raw.axeVersion || 'unknown', scanEngine: 'axe-core', scanSource: 'vation-agent-chrome-extension' }
+    metadata: { axeVersion: raw.axeVersion || 'unknown', scanEngine: 'axe-core', scanSource: 'accea-agent-chrome-extension' }
   };
 }
 
@@ -239,6 +265,84 @@ function sendToTab(tabId, message) {
 }
 
 /* ═══════════════════════════════════════════
+   Lighthouse (PageSpeed Insights) handler
+   Runs in the service worker so it survives popup open/close.
+   Results cached per URL for LIGHTHOUSE_TTL ms.
+   ═══════════════════════════════════════════ */
+
+function getLighthouseCache(url) {
+  const cached = lighthouseCache.get(url);
+  if (!cached) return { status: 'none' };
+  if (Date.now() - cached.fetchedAt > LIGHTHOUSE_TTL) {
+    lighthouseCache.delete(url);
+    return { status: 'none' };
+  }
+  return { status: 'ready', data: cached.data };
+}
+
+async function handleFetchLighthouse(url) {
+  // 1. Cache hit — respond instantly
+  const cached = getLighthouseCache(url);
+  if (cached.status === 'ready') return { status: 'ready', data: cached.data };
+
+  if (!url || url.startsWith('chrome://') || url.startsWith('chrome-extension://') ||
+      url.startsWith('about:') || url.startsWith('file:')) {
+    return { status: 'error', error: 'Cannot analyze internal pages' };
+  }
+
+  // 2. Already fetching — tell popup to just wait for the push
+  if (lighthouseInFlight.has(url)) return { status: 'fetching' };
+
+  // 3. Kick off fetch FIRE-AND-FORGET — respond to popup immediately
+  //    (MV3 message responses must come back within ~5s; PageSpeed takes 10-30s)
+  lighthouseInFlight.add(url);
+  doLighthouseFetch(url); // intentionally NOT awaited
+  return { status: 'fetching' };
+}
+
+async function doLighthouseFetch(url) {
+  // Read API key from settings (if user has provided one)
+  const settings = await getSettings();
+  const apiKey = (settings.pagespeedApiKey || '').trim();
+
+  let apiUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed` +
+    `?url=${encodeURIComponent(url)}` +
+    `&category=PERFORMANCE&category=ACCESSIBILITY&category=BEST_PRACTICES&category=SEO` +
+    `&strategy=mobile`;
+  if (apiKey) apiUrl += `&key=${encodeURIComponent(apiKey)}`;
+
+  try {
+    const response = await fetch(apiUrl, { signal: AbortSignal.timeout(120000) });
+    if (response.status === 429) {
+      throw new Error('Rate limited — add a free PageSpeed API key in Settings');
+    }
+    if (!response.ok) throw new Error(`PageSpeed API ${response.status}`);
+
+    const json = await response.json();
+    const cats = json.lighthouseResult?.categories || {};
+
+    const data = {
+      performance:   Math.round((cats.performance?.score        || 0) * 100),
+      accessibility: Math.round((cats.accessibility?.score      || 0) * 100),
+      bestPractices: Math.round((cats['best-practices']?.score  || 0) * 100),
+      seo:           Math.round((cats.seo?.score                || 0) * 100),
+      fetchedAt:     Date.now()
+    };
+
+    lighthouseCache.set(url, { data, fetchedAt: Date.now() });
+
+    // Push result to popup (if open)
+    try { chrome.runtime.sendMessage({ action: 'lighthouse-ready', data }); } catch { /* closed */ }
+  } catch (e) {
+    console.warn('[Accea] Lighthouse fetch failed:', e.message);
+    // Push error to popup (if open)
+    try { chrome.runtime.sendMessage({ action: 'lighthouse-ready', error: e.message }); } catch { /* closed */ }
+  } finally {
+    lighthouseInFlight.delete(url);
+  }
+}
+
+/* ═══════════════════════════════════════════
    Analysis builder (deterministic, no LLM)
    ═══════════════════════════════════════════ */
 
@@ -273,9 +377,11 @@ function buildAnalysis(scanResult) {
 
 function getComplianceStatus(score, summary) {
   if (!summary) return 'Unknown';
-  if (score >= 90 && (summary.bySeverity?.critical || 0) === 0) return 'Compliant';
-  if (score >= 70 || (summary.bySeverity?.critical || 0) > 0) return 'At Risk';
-  return 'Not Compliant';
+  const criticals = summary.bySeverity?.critical || 0;
+  if (score >= 90 && criticals === 0) return 'Compliant';          // truly clean
+  if (score >= 70 && criticals === 0) return 'At Risk';            // good score but has issues
+  if (criticals > 0 || score >= 50)  return 'At Risk';             // critical issues or mid-range
+  return 'Not Compliant';                                           // score < 50
 }
 
 /* ═══════════════════════════════════════════
@@ -314,7 +420,8 @@ const DEFAULT_SETTINGS = {
   localServerUrl: 'http://localhost:3000',
   autoHighlight: true,
   showBadge: true,
-  scanOnLoad: false
+  scanOnLoad: false,
+  pagespeedApiKey: ''
 };
 
 async function getSettings() {
@@ -386,12 +493,12 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   if (details.reason === 'install') {
     // Set default settings
     await chrome.storage.local.set(DEFAULT_SETTINGS);
-    console.log('[Vation Agent] Extension installed — defaults set');
+    console.log('[Accea Agent] Extension installed — defaults set');
   }
 
   // Pre-detect LLM capabilities
   const caps = await llmRouter.detectCapabilities();
-  console.log('[Vation Agent] LLM capabilities:', caps);
+  console.log('[Accea Agent] LLM capabilities:', caps);
 });
 
-console.log('[Vation Agent] Service worker loaded');
+console.log('[Accea Agent] Service worker loaded');
