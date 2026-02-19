@@ -136,16 +136,169 @@ async function handleScan(tabId) {
     throw new Error(axeRaw.error);
   }
 
-  // Step 3: Normalize results in the service worker
-  const scanResult = normalizeAxeResults(axeRaw);
+  // Step 3: Extract design info from the page (colors, fonts, tech stack, meta)
+  const [{ result: designInfo }] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: () => {
+      /* ── Helpers ── */
+      function toHex(color) {
+        if (!color || color === 'transparent' || color === 'rgba(0, 0, 0, 0)') return null;
+        const m = color.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+        if (!m) return null;
+        const h = [m[1], m[2], m[3]].map(n => parseInt(n).toString(16).padStart(2, '0')).join('');
+        return '#' + h;
+      }
+      function luminance(hex) {
+        const r = parseInt(hex.slice(1,3),16)/255, g = parseInt(hex.slice(3,5),16)/255, b = parseInt(hex.slice(5,7),16)/255;
+        const lin = c => c < 0.03928 ? c/12.92 : Math.pow((c+0.055)/1.055, 2.4);
+        return 0.2126*lin(r) + 0.7152*lin(g) + 0.0722*lin(b);
+      }
+      function isDark(hex) { return luminance(hex) < 0.5; }
 
-  // Step 4: Build structured analysis
+      /* ── Computed colors from top ~300 visible elements ── */
+      const colorSet = new Map(); // hex -> { hex, count, role }
+      const els = Array.from(document.querySelectorAll('*')).slice(0, 300);
+      for (const el of els) {
+        const s = window.getComputedStyle(el);
+        const pairs = [
+          [s.backgroundColor, 'background'],
+          [s.color, 'text'],
+          [s.borderColor, 'border'],
+        ];
+        for (const [raw, role] of pairs) {
+          const hex = toHex(raw);
+          if (!hex) continue;
+          if (colorSet.has(hex)) {
+            const e = colorSet.get(hex);
+            e.count++;
+            if (!e.roles.includes(role)) e.roles.push(role);
+          } else {
+            colorSet.set(hex, { hex, count: 1, roles: [role] });
+          }
+        }
+      }
+      // Top 16 most-used colors
+      const colors = [...colorSet.values()]
+        .sort((a,b) => b.count - a.count)
+        .slice(0, 16)
+        .map(c => ({ hex: c.hex, roles: c.roles, dark: isDark(c.hex) }));
+
+      /* ── CSS custom properties (design tokens) ── */
+      const tokens = {};
+      try {
+        const sheets = Array.from(document.styleSheets);
+        for (const sheet of sheets) {
+          try {
+            const rules = Array.from(sheet.cssRules || []);
+            for (const rule of rules) {
+              if (rule.selectorText === ':root') {
+                const text = rule.cssText;
+                const matches = text.matchAll(/--([\w-]+):\s*([^;]+);/g);
+                for (const m of matches) {
+                  tokens[`--${m[1]}`] = m[2].trim();
+                }
+              }
+            }
+          } catch { /* cross-origin sheet */ }
+        }
+      } catch {}
+
+      /* ── Fonts ── */
+      const fontSet = new Set();
+      for (const el of els) {
+        const ff = window.getComputedStyle(el).fontFamily;
+        if (ff) ff.split(',').forEach(f => {
+          const clean = f.trim().replace(/['"]/g, '').split(' ').slice(0,4).join(' ');
+          if (clean && clean.toLowerCase() !== 'inherit') fontSet.add(clean);
+        });
+      }
+      // Also check @font-face names
+      const fonts = [...fontSet].slice(0, 12);
+
+      /* ── Tech stack detection ── */
+      const tech = [];
+      const scripts = Array.from(document.querySelectorAll('script[src]')).map(s => s.src);
+      const metas = Object.fromEntries(
+        Array.from(document.querySelectorAll('meta')).map(m => [
+          (m.name || m.getAttribute('property') || '').toLowerCase(),
+          m.content || ''
+        ])
+      );
+
+      // Frameworks / libs
+      const detectMap = [
+        ['React',       () => !!(window.React || document.querySelector('[data-reactroot],[data-reactid]') || scripts.some(s => /react/i.test(s)))],
+        ['Next.js',     () => !!(window.__NEXT_DATA__ || document.getElementById('__NEXT_DATA__') || document.querySelector('#__next'))],
+        ['Vue',         () => !!(window.Vue || document.querySelector('[data-v-app],[data-v-]') || scripts.some(s => /vue/i.test(s)))],
+        ['Nuxt',        () => !!(window.__NUXT__ || window.__nuxt)],
+        ['Angular',     () => !!(window.ng || document.querySelector('[ng-version],[_nghost-],[ng-app]') || scripts.some(s => /angular/i.test(s)))],
+        ['Svelte',      () => !!(document.querySelector('[class*="svelte-"]') || scripts.some(s => /svelte/i.test(s)))],
+        ['Gatsby',      () => !!(window.___gatsby || document.getElementById('gatsby-announcer'))],
+        ['Remix',       () => !!(window.__remixContext)],
+        ['jQuery',      () => !!(window.jQuery || window.$?.fn?.jquery)],
+        ['Bootstrap',   () => !!(document.querySelector('[class*="col-"][class*="col-"],.container,.container-fluid') || scripts.some(s => /bootstrap/i.test(s)))],
+        ['Tailwind',    () => !!(document.querySelector('[class*="tw-"],[class*="text-"],[class*="flex "],[class*="grid "]') || scripts.some(s => /tailwind/i.test(s)))],
+        ['WordPress',   () => !!(document.querySelector('meta[name="generator"][content*="WordPress"],.wp-content,.wp-block') || metas['generator']?.includes('WordPress'))],
+        ['Shopify',     () => !!(window.Shopify || scripts.some(s => /shopify/i.test(s)))],
+        ['Webflow',     () => !!(document.querySelector('[data-wf-page],[data-wf-site]'))],
+        ['Framer',      () => !!(document.querySelector('[data-framer-component-type]'))],
+        ['GSAP',        () => !!(window.gsap || window.TweenMax || window.TweenLite)],
+        ['Lodash',      () => !!(window._ && window._.VERSION)],
+        ['TypeScript',  () => scripts.some(s => /\.ts\b/.test(s))],
+        ['Vite',        () => scripts.some(s => /\/@vite\/|\/vite\//.test(s))],
+        ['Webpack',     () => !!(window.webpackChunk || window.__webpack_require__)],
+        ['GraphQL',     () => !!(window.__APOLLO_CLIENT__ || scripts.some(s => /apollo|graphql/i.test(s)))],
+      ];
+      for (const [name, detect] of detectMap) {
+        try { if (detect()) tech.push(name); } catch {}
+      }
+
+      // CMS / generator from meta
+      const gen = metas['generator'] || '';
+      if (gen && !tech.some(t => gen.toLowerCase().includes(t.toLowerCase()))) {
+        const shortGen = gen.split(' ').slice(0,3).join(' ');
+        if (shortGen) tech.push(shortGen);
+      }
+
+      /* ── Page meta ── */
+      const meta = {
+        title: document.title || '',
+        description: metas['description'] || metas['og:description'] || '',
+        url: window.location.href,
+        canonical: document.querySelector('link[rel="canonical"]')?.href || '',
+        favicon: document.querySelector('link[rel*="icon"]')?.href || '',
+        viewport: metas['viewport'] || '',
+        ogTitle: metas['og:title'] || '',
+        ogImage: metas['og:image'] || '',
+        twitterCard: metas['twitter:card'] || '',
+        charset: document.characterSet || '',
+        lang: document.documentElement.lang || '',
+        themeColor: metas['theme-color'] || '',
+      };
+
+      /* ── Typography scale ── */
+      const typeSizes = new Set();
+      for (const el of els) {
+        const sz = window.getComputedStyle(el).fontSize;
+        if (sz) typeSizes.add(sz);
+      }
+
+      return { colors, fonts, tech, meta, tokens, typeSizes: [...typeSizes].slice(0, 20) };
+    }
+  });
+
+  // Step 4: Normalize results in the service worker
+  const scanResult = normalizeAxeResults(axeRaw);
+  scanResult.designInfo = designInfo || null;
+
+  // Step 5: Build structured analysis
   const analysis = buildAnalysis(scanResult);
 
-  // Step 5: Store in history
+  // Step 6: Store in history
   await storeHistoryEntry(tabId, analysis, scanResult);
 
-  // Step 6: Highlight issues on the page via content script
+  // Step 7: Highlight issues on the page via content script
   await sendToTab(tabId, { type: 'highlight-issues', issues: analysis.issues });
 
   return { analysis, scanResult };
@@ -371,7 +524,8 @@ function buildAnalysis(scanResult) {
     url: scanResult.url,
     title: scanResult.title,
     timestamp: scanResult.timestamp,
-    metadata: scanResult.metadata
+    metadata: scanResult.metadata,
+    designInfo: scanResult.designInfo || null
   };
 }
 

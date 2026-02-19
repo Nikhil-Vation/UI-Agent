@@ -7,6 +7,7 @@
 /* ═══════ DOM refs ═══════ */
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
+const escHtml = (s) => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
 const els = {
   // Views
@@ -104,6 +105,15 @@ const els = {
   // Toast & confetti
   toast:        $('#toast'),
   confettiCanvas: $('#confetti-canvas'),
+
+  // Design tab
+  designEmpty:        $('#design-empty'),
+  designContent:      $('#design-content'),
+  designMetaSection:  $('#design-meta-section'),
+  designColorsSection:$('#design-colors-section'),
+  designFontsSection: $('#design-fonts-section'),
+  designTechSection:  $('#design-tech-section'),
+  designTokensSection:$('#design-tokens-section'),
 
   // Tips tab
   tipsEmpty:         $('#tips-empty'),
@@ -337,6 +347,139 @@ function switchTab(tabName) {
   if (tabName === 'history') loadHistory();
   if (tabName === 'tips') renderTips();
   if (tabName === 'checklist') renderChecklist();
+  if (tabName === 'design') renderDesignTab();
+}
+
+/* ═══════ Design tab ═══════ */
+
+function renderDesignTab() {
+  const d = currentAnalysis?.designInfo;
+  if (!d) {
+    els.designEmpty.classList.remove('hidden');
+    els.designContent.classList.add('hidden');
+    return;
+  }
+  els.designEmpty.classList.add('hidden');
+  els.designContent.classList.remove('hidden');
+
+  // ── Page meta ──
+  const meta = d.meta || {};
+  const metaRows = [
+    ['Title',        meta.title],
+    ['URL',          meta.url],
+    ['Description',  meta.description],
+    ['Theme color',  meta.themeColor],
+    ['OG title',     meta.ogTitle],
+    ['OG image',     meta.ogImage],
+    ['Twitter card', meta.twitterCard],
+    ['Viewport',     meta.viewport],
+    ['Charset',      meta.charset],
+    ['Language',     meta.lang],
+    ['Canonical',    meta.canonical],
+    ['Favicon',      meta.favicon],
+  ].filter(([, v]) => v);
+
+  els.designMetaSection.innerHTML = `
+    <div class="design-section-title">
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      Page Info
+    </div>
+    <div class="meta-table">${
+      metaRows.map(([k, v]) => {
+        const isUrl = v && (v.startsWith('http') || v.startsWith('/'));
+        const display = v.length > 60 ? v.slice(0, 57) + '…' : v;
+        return `<div class="meta-row">
+          <span class="meta-key">${k}</span>
+          <span class="meta-val" title="${escHtml(v)}">${
+            isUrl
+              ? `<a class="meta-link" href="${escHtml(v)}" target="_blank" rel="noopener">${escHtml(display)}</a>`
+              : escHtml(display)
+          }</span>
+        </div>`;
+      }).join('')
+    }</div>`;
+
+  // ── Colors ──
+  const colors = d.colors || [];
+  if (colors.length) {
+    els.designColorsSection.innerHTML = `
+      <div class="design-section-title">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="13.5" cy="6.5" r="0.5" fill="currentColor"/><circle cx="17.5" cy="10.5" r="0.5" fill="currentColor"/><circle cx="8.5" cy="7.5" r="0.5" fill="currentColor"/><circle cx="6.5" cy="12.5" r="0.5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>
+        Colour Palette
+        <span class="design-section-count">${colors.length}</span>
+      </div>
+      <div class="color-swatches">${
+        colors.map(c => `
+          <div class="color-swatch-wrap" title="${c.hex} · used ${c.count}×">
+            <div class="color-swatch" style="background:${c.hex};"
+                 data-hex="${c.hex}"
+                 onclick="navigator.clipboard?.writeText('${c.hex}');this.classList.add('copied');setTimeout(()=>this.classList.remove('copied'),1200)">
+            </div>
+            <span class="color-hex">${c.hex}</span>
+          </div>`).join('')
+      }</div>`;
+  } else {
+    els.designColorsSection.innerHTML = '';
+  }
+
+  // ── Fonts ──
+  const fonts = d.fonts || [];
+  if (fonts.length) {
+    els.designFontsSection.innerHTML = `
+      <div class="design-section-title">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
+        Fonts
+        <span class="design-section-count">${fonts.length}</span>
+      </div>
+      <div class="font-chips">${
+        fonts.map(f => `<span class="font-chip" style="font-family:${f}">${escHtml(f)}</span>`).join('')
+      }</div>`;
+  } else {
+    els.designFontsSection.innerHTML = '';
+  }
+
+  // ── Tech stack ──
+  const tech = d.tech || [];
+  if (tech.length) {
+    els.designTechSection.innerHTML = `
+      <div class="design-section-title">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+        Tech Stack
+        <span class="design-section-count">${tech.length}</span>
+      </div>
+      <div class="tech-chips">${
+        tech.map(t => `<span class="tech-chip">${escHtml(t)}</span>`).join('')
+      }</div>`;
+  } else {
+    els.designTechSection.innerHTML = '';
+  }
+
+  // ── CSS tokens / custom properties ──
+  const tokens = d.tokens || {};
+  const tokenEntries = Object.entries(tokens);
+  if (tokenEntries.length) {
+    els.designTokensSection.innerHTML = `
+      <div class="design-section-title">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        CSS Design Tokens
+        <span class="design-section-count">${tokenEntries.length}</span>
+      </div>
+      <div class="meta-table">${
+        tokenEntries.slice(0, 30).map(([k, v]) => {
+          const isColor = /^#|^rgb|^hsl/.test((v || '').trim());
+          return `<div class="meta-row">
+            <span class="meta-key token-name">${escHtml(k)}</span>
+            <span class="meta-val">${
+              isColor
+                ? `<span class="token-swatch" style="background:${escHtml(v)}"></span>`
+                : ''
+            }${escHtml(v.length > 40 ? v.slice(0, 37) + '…' : v)}</span>
+          </div>`;
+        }).join('')
+      }${tokenEntries.length > 30 ? `<div class="meta-row"><span class="meta-key" style="color:var(--text-muted)">+${tokenEntries.length - 30} more…</span></div>` : ''}</div>`;
+  } else {
+    els.designTokensSection.innerHTML = '';
+  }
 }
 
 /* ═══════ Severity filter ═══════ */

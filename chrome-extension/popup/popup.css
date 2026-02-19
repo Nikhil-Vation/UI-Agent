@@ -2296,3 +2296,193 @@ body {
   background: rgba(255,255,255,0.06);
   color: var(--text);
 }
+
+/* ═══════════════════════════════════════════════
+   Design Tab
+═══════════════════════════════════════════════ */
+
+.design-content {
+  padding: 4px 0;
+}
+
+.design-section {
+  margin-bottom: 18px;
+}
+
+.design-section-title {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.design-section-count {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent);
+  background: rgba(99,102,241,0.12);
+  border-radius: 8px;
+  padding: 1px 6px;
+}
+
+/* ── Color swatches ── */
+
+.color-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.color-swatch-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  cursor: pointer;
+}
+
+.color-swatch {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.10);
+  transition: transform 0.15s, box-shadow 0.15s;
+  position: relative;
+  overflow: hidden;
+}
+
+.color-swatch:hover {
+  transform: scale(1.10);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+}
+
+.color-swatch.copied::after {
+  content: '✓';
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,0.45);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.color-hex {
+  font-size: 8px;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  color: var(--text-muted);
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+
+/* ── Font chips ── */
+
+.font-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.font-chip {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.08);
+  color: var(--text);
+  white-space: nowrap;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Tech stack chips ── */
+
+.tech-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tech-chip {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 10px;
+  background: rgba(99,102,241,0.12);
+  border: 1px solid rgba(99,102,241,0.20);
+  color: #a5b4fc;
+  white-space: nowrap;
+}
+
+/* ── Meta table ── */
+
+.meta-table {
+  width: 100%;
+}
+
+.meta-row {
+  display: flex;
+  gap: 8px;
+  padding: 4px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.04);
+  align-items: baseline;
+  min-height: 24px;
+}
+
+.meta-row:last-child {
+  border-bottom: none;
+}
+
+.meta-key {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  min-width: 88px;
+  flex-shrink: 0;
+  text-transform: capitalize;
+}
+
+.meta-val {
+  font-size: 10px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: calc(100% - 96px);
+}
+
+.meta-link {
+  color: #60a5fa;
+  text-decoration: none;
+}
+.meta-link:hover { text-decoration: underline; }
+
+/* ── CSS token list ── */
+
+.token-name {
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 9px;
+  color: #94a3b8;
+}
+
+.token-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  border: 1px solid rgba(255,255,255,0.15);
+  margin-right: 4px;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
