@@ -357,14 +357,47 @@ function switchTab(tabName) {
 
 /* ═══════ Design tab ═══════ */
 
-/* Tech colour map for recognisable brand colours */
+/* Tech brand colours */
 const TECH_COLORS = {
-  'React':'#61dafb','Next.js':'#fff','Vue':'#42b883','Nuxt':'#00dc82',
+  // Frameworks
+  'React':'#61dafb','Next.js':'#ffffff','Vue':'#42b883','Nuxt':'#00dc82',
   'Angular':'#dd0031','Svelte':'#ff3e00','Gatsby':'#663399','Remix':'#f44250',
-  'jQuery':'#0769ad','Bootstrap':'#7952b3','Tailwind':'#38bdf8',
-  'WordPress':'#21759b','Shopify':'#96bf48','Webflow':'#4353ff',
-  'Framer':'#0055ff','GSAP':'#88ce02','Lodash':'#3492ff',
-  'TypeScript':'#3178c6','Vite':'#bd34fe','Webpack':'#8dd6f9','GraphQL':'#e10098'
+  'Astro':'#ff5d01','SolidJS':'#2c4f7c','Ember':'#e04e39','Alpine.js':'#77c1d2',
+  'htmx':'#36c','Qwik':'#ac7ef4',
+  // Libraries
+  'jQuery':'#0769ad','Lodash':'#3492ff','GSAP':'#88ce02',
+  'GraphQL / Apollo':'#e10098','Axios':'#5a29e4','Moment.js':'#cacaca',
+  'Day.js':'#f8c307','Three.js':'#049ef4','D3.js':'#f9a03c',
+  'Swiper':'#0080ff','Lottie':'#00a2e8',
+  // CSS
+  'Tailwind CSS':'#38bdf8','Bootstrap':'#7952b3','Bulma':'#00d1b2',
+  'Material UI':'#007fff','Ant Design':'#1677ff','Chakra UI':'#319795',
+  'Sass / SCSS':'#cd6799','Less':'#1d365d','styled-components':'#db7093',
+  // Build
+  'Webpack':'#8dd6f9','Vite':'#bd34fe','Parcel':'#e0a22a','Rollup':'#ec4a37',
+  'TypeScript':'#3178c6','Babel':'#f9dc3e','esbuild':'#ffcf00','Turbopack':'#ff6c37',
+  // Platform
+  'WordPress':'#21759b','Shopify':'#96bf48','Webflow':'#4353ff','Framer':'#0055ff',
+  'Drupal':'#0678be','Joomla':'#f44321','Wix':'#faad00','Squarespace':'#222222',
+  'Ghost':'#15171a','Contentful':'#2478cc','Storyblok':'#09b3af','Sanity':'#f03e2f',
+  // Analytics
+  'Google Analytics':'#e37400','Meta Pixel':'#0866ff','Mixpanel':'#7856ff',
+  'PostHog':'#f76b15','Hotjar':'#fd3a5c','Segment':'#52bd94','Amplitude':'#196de3',
+  'Intercom':'#286efa','Crisp':'#1972f5','Sentry':'#362d59','Datadog':'#774aa4',
+  // Hosting
+  'Vercel':'#ffffff','Netlify':'#00c7b7','Cloudflare':'#f6821f',
+  'AWS':'#ff9900','Firebase':'#ffca28','Supabase':'#3ecf8e','jsDelivr / cdnjs':'#e84d3d',
+};
+
+const TECH_CATEGORY_ORDER = ['Framework','Library','CSS','Build','Platform','Analytics','Hosting'];
+const TECH_CATEGORY_ICONS = {
+  'Framework': '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>',
+  'Library':   '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>',
+  'CSS':       '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41M18.66 5.34l1.41-1.41"/></svg>',
+  'Build':     '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>',
+  'Platform':  '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>',
+  'Analytics': '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>',
+  'Hosting':   '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>',
 };
 
 function renderDesignTab() {
@@ -473,6 +506,16 @@ function renderDesignTab() {
 
   // ── 4. Tech Stack ──
   if (tech.length) {
+    // Group by category
+    const grouped = {};
+    for (const item of tech) {
+      const cat = item.category || 'Other';
+      if (!grouped[cat]) grouped[cat] = [];
+      grouped[cat].push(item.name);
+    }
+    const catOrder = [...TECH_CATEGORY_ORDER, 'Other'];
+    const sections = catOrder.filter(c => grouped[c]?.length);
+
     els.designTechSection.innerHTML = `
       <div class="di-card">
         <div class="di-card-header">
@@ -482,15 +525,22 @@ function renderDesignTab() {
           </span>
           <span class="di-badge">${tech.length}</span>
         </div>
-        <div class="di-tech-grid">
-          ${tech.map(t => {
-            const col = TECH_COLORS[t] || 'rgba(255,255,255,0.15)';
-            return `<div class="di-tech-item">
-              <span class="di-tech-dot" style="background:${col};box-shadow:0 0 6px ${col}40"></span>
-              <span class="di-tech-name">${escHtml(t)}</span>
-            </div>`;
-          }).join('')}
-        </div>
+        ${sections.map(cat => `
+          <div class="di-tech-category">
+            <div class="di-tech-cat-label">
+              ${TECH_CATEGORY_ICONS[cat] || ''}
+              ${cat}
+            </div>
+            <div class="di-tech-grid">
+              ${grouped[cat].map(t => {
+                const col = TECH_COLORS[t] || 'rgba(255,255,255,0.20)';
+                return `<div class="di-tech-item">
+                  <span class="di-tech-dot" style="background:${col};box-shadow:0 0 5px ${col}55"></span>
+                  <span class="di-tech-name">${escHtml(t)}</span>
+                </div>`;
+              }).join('')}
+            </div>
+          </div>`).join('')}
       </div>`;
   } else {
     els.designTechSection.innerHTML = '';

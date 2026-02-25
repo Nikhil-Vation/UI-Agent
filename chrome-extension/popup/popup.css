@@ -2573,6 +2573,25 @@ body {
    Tech stack
 ───────────────────────────────────── */
 
+.di-tech-category {
+  margin-bottom: 10px;
+}
+.di-tech-category:last-child { margin-bottom: 0; }
+
+.di-tech-cat-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+
 .di-tech-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

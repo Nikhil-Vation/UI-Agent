@@ -217,49 +217,107 @@ async function handleScan(tabId) {
       const fonts = [...fontSet].slice(0, 12);
 
       /* ── Tech stack detection ── */
-      const tech = [];
+      const techItems = [];
+      const _push = (name, category) => techItems.push({ name, category });
       const scripts = Array.from(document.querySelectorAll('script[src]')).map(s => s.src);
-      const metas = Object.fromEntries(
+      const links   = Array.from(document.querySelectorAll('link[href]')).map(l => l.href);
+      const allSrcs = [...scripts, ...links];
+      const metas   = Object.fromEntries(
         Array.from(document.querySelectorAll('meta')).map(m => [
           (m.name || m.getAttribute('property') || '').toLowerCase(),
           m.content || ''
         ])
       );
+      const gen = (metas['generator'] || '').toLowerCase();
 
-      // Frameworks / libs
-      const detectMap = [
-        ['React',       () => !!(window.React || document.querySelector('[data-reactroot],[data-reactid]') || scripts.some(s => /react/i.test(s)))],
-        ['Next.js',     () => !!(window.__NEXT_DATA__ || document.getElementById('__NEXT_DATA__') || document.querySelector('#__next'))],
-        ['Vue',         () => !!(window.Vue || document.querySelector('[data-v-app],[data-v-]') || scripts.some(s => /vue/i.test(s)))],
-        ['Nuxt',        () => !!(window.__NUXT__ || window.__nuxt)],
-        ['Angular',     () => !!(window.ng || document.querySelector('[ng-version],[_nghost-],[ng-app]') || scripts.some(s => /angular/i.test(s)))],
-        ['Svelte',      () => !!(document.querySelector('[class*="svelte-"]') || scripts.some(s => /svelte/i.test(s)))],
-        ['Gatsby',      () => !!(window.___gatsby || document.getElementById('gatsby-announcer'))],
-        ['Remix',       () => !!(window.__remixContext)],
-        ['jQuery',      () => !!(window.jQuery || window.$?.fn?.jquery)],
-        ['Bootstrap',   () => !!(document.querySelector('[class*="col-"][class*="col-"],.container,.container-fluid') || scripts.some(s => /bootstrap/i.test(s)))],
-        ['Tailwind',    () => !!(document.querySelector('[class*="tw-"],[class*="text-"],[class*="flex "],[class*="grid "]') || scripts.some(s => /tailwind/i.test(s)))],
-        ['WordPress',   () => !!(document.querySelector('meta[name="generator"][content*="WordPress"],.wp-content,.wp-block') || metas['generator']?.includes('WordPress'))],
-        ['Shopify',     () => !!(window.Shopify || scripts.some(s => /shopify/i.test(s)))],
-        ['Webflow',     () => !!(document.querySelector('[data-wf-page],[data-wf-site]'))],
-        ['Framer',      () => !!(document.querySelector('[data-framer-component-type]'))],
-        ['GSAP',        () => !!(window.gsap || window.TweenMax || window.TweenLite)],
-        ['Lodash',      () => !!(window._ && window._.VERSION)],
-        ['TypeScript',  () => scripts.some(s => /\.ts\b/.test(s))],
-        ['Vite',        () => scripts.some(s => /\/@vite\/|\/vite\//.test(s))],
-        ['Webpack',     () => !!(window.webpackChunk || window.__webpack_require__)],
-        ['GraphQL',     () => !!(window.__APOLLO_CLIENT__ || scripts.some(s => /apollo|graphql/i.test(s)))],
-      ];
-      for (const [name, detect] of detectMap) {
-        try { if (detect()) tech.push(name); } catch {}
+      // ── JS Frameworks ──
+      try { if (window.__NEXT_DATA__ || document.getElementById('__NEXT_DATA__') || document.querySelector('#__next')) _push('Next.js','Framework');
+        else if (window.React || document.querySelector('[data-reactroot],[data-reactid]') || allSrcs.some(s => /\/react[.@]/i.test(s))) _push('React','Framework'); } catch {}
+      try { if (window.__NUXT__ || window.__nuxt) _push('Nuxt','Framework');
+        else if (window.Vue || document.querySelector('[data-v-app]') || allSrcs.some(s => /\/vue[.@]/i.test(s))) _push('Vue','Framework'); } catch {}
+      try { if (window.ng || document.querySelector('[ng-version],[_nghost-],[ng-app]') || allSrcs.some(s => /angular\.min|@angular/i.test(s))) _push('Angular','Framework'); } catch {}
+      try { if (document.querySelector('[class*="svelte-"]') || allSrcs.some(s => /svelte/i.test(s))) _push('Svelte','Framework'); } catch {}
+      try { if (window.___gatsby || document.getElementById('gatsby-announcer')) _push('Gatsby','Framework'); } catch {}
+      try { if (window.__remixContext) _push('Remix','Framework'); } catch {}
+      try { if (window.Astro || document.querySelector('[data-astro-cid],[astro-island]')) _push('Astro','Framework'); } catch {}
+      try { if (window.Alpine) _push('Alpine.js','Framework'); } catch {}
+      try { if (window.htmx) _push('htmx','Framework'); } catch {}
+
+      // ── JS Libraries ──
+      try { if (window.jQuery || window.$?.fn?.jquery) _push('jQuery','Library'); } catch {}
+      try { if (window._ && window._.VERSION) _push('Lodash','Library'); } catch {}
+      try { if (window.gsap || window.TweenMax || window.TweenLite) _push('GSAP','Library'); } catch {}
+      try { if (window.__APOLLO_CLIENT__ || allSrcs.some(s => /apollo|graphql/i.test(s))) _push('GraphQL / Apollo','Library'); } catch {}
+      try { if (window.axios) _push('Axios','Library'); } catch {}
+      try { if (window.moment) _push('Moment.js','Library'); } catch {}
+      try { if (window.dayjs) _push('Day.js','Library'); } catch {}
+      try { if (window.THREE) _push('Three.js','Library'); } catch {}
+      try { if (window.d3) _push('D3.js','Library'); } catch {}
+      try { if (window.Swiper) _push('Swiper','Library'); } catch {}
+      try { if (window.lottie) _push('Lottie','Library'); } catch {}
+
+      // ── CSS Frameworks & Preprocessors ──
+      try { if (allSrcs.some(s => /tailwind/i.test(s)) || document.querySelector('[class*="tw-"]')) _push('Tailwind CSS','CSS'); } catch {}
+      try { if (allSrcs.some(s => /bootstrap/i.test(s)) || document.querySelector('.navbar,.btn.btn-primary')) _push('Bootstrap','CSS'); } catch {}
+      try { if (allSrcs.some(s => /bulma/i.test(s)) || document.querySelector('.column.is-,.hero.is-')) _push('Bulma','CSS'); } catch {}
+      try { if (allSrcs.some(s => /material-ui|@mui/i.test(s)) || document.querySelector('[class*="MuiButton"],[class*="MuiBox"]')) _push('Material UI','CSS'); } catch {}
+      try { if (allSrcs.some(s => /antd|ant-design/i.test(s)) || document.querySelector('.ant-btn,.ant-layout')) _push('Ant Design','CSS'); } catch {}
+      try { if (allSrcs.some(s => /chakra-ui/i.test(s)) || document.querySelector('[class*="chakra-"]')) _push('Chakra UI','CSS'); } catch {}
+      try { if (allSrcs.some(s => /\.scss|\.sass/i.test(s)) || (() => { try { return Array.from(document.styleSheets).some(ss => (ss.href||'').match(/\.scss|\.sass/i)); } catch{return false;} })()) _push('Sass / SCSS','CSS'); } catch {}
+      try { if (allSrcs.some(s => /styled-components/i.test(s)) || document.querySelector('[class*="sc-"]')) _push('styled-components','CSS'); } catch {}
+
+      // ── Build Tools ──
+      try { if (window.webpackChunk || window.__webpack_require__) _push('Webpack','Build'); } catch {}
+      try { if (allSrcs.some(s => /\/@vite\/|__vite__/i.test(s)) || document.querySelector('script[type="module"][src*="vite"]')) _push('Vite','Build'); } catch {}
+      try { if (allSrcs.some(s => /rollup/i.test(s))) _push('Rollup','Build'); } catch {}
+      try { if (allSrcs.some(s => /\.tsx?$/.test(s))) _push('TypeScript','Build'); } catch {}
+      try { if (allSrcs.some(s => /esbuild/i.test(s))) _push('esbuild','Build'); } catch {}
+      try { if (window.__TURBOPACK__) _push('Turbopack','Build'); } catch {}
+
+      // ── CMS / Platform ──
+      try { if (gen.includes('wordpress') || document.querySelector('.wp-content,.wp-block,#wpadminbar')) _push('WordPress','Platform'); } catch {}
+      try { if (window.Shopify || allSrcs.some(s => /shopify/i.test(s))) _push('Shopify','Platform'); } catch {}
+      try { if (document.querySelector('[data-wf-page],[data-wf-site]')) _push('Webflow','Platform'); } catch {}
+      try { if (document.querySelector('[data-framer-component-type]')) _push('Framer','Platform'); } catch {}
+      try { if (gen.includes('drupal') || window.Drupal) _push('Drupal','Platform'); } catch {}
+      try { if (gen.includes('joomla') || window.Joomla) _push('Joomla','Platform'); } catch {}
+      try { if (gen.includes('wix') || window.wixBiSession) _push('Wix','Platform'); } catch {}
+      try { if (gen.includes('squarespace') || document.querySelector('[data-squarespace-version]')) _push('Squarespace','Platform'); } catch {}
+      try { if (window.Ghost) _push('Ghost','Platform'); } catch {}
+      try { if (window.STORYBLOK_ENV || allSrcs.some(s => /storyblok/i.test(s))) _push('Storyblok','Platform'); } catch {}
+      try { if (allSrcs.some(s => /sanity\.io|sanity-studio/i.test(s)) || window._sanity) _push('Sanity','Platform'); } catch {}
+
+      // ── Analytics & Monitoring ──
+      try { if (window.ga || window.gtag || allSrcs.some(s => /google-analytics|gtag\/js/i.test(s))) _push('Google Analytics','Analytics'); } catch {}
+      try { if (window.fbq || allSrcs.some(s => /connect\.facebook\.net/i.test(s))) _push('Meta Pixel','Analytics'); } catch {}
+      try { if (window.mixpanel) _push('Mixpanel','Analytics'); } catch {}
+      try { if (window.posthog || allSrcs.some(s => /posthog/i.test(s))) _push('PostHog','Analytics'); } catch {}
+      try { if (window.Hotjar || window.hj) _push('Hotjar','Analytics'); } catch {}
+      try { if (window.amplitude) _push('Amplitude','Analytics'); } catch {}
+      try { if (window.Intercom) _push('Intercom','Analytics'); } catch {}
+      try { if (window.Sentry) _push('Sentry','Analytics'); } catch {}
+      try { if (window.DD_LOGS || window.DD_RUM) _push('Datadog','Analytics'); } catch {}
+
+      // ── Hosting / CDN ──
+      try {
+        const origins = allSrcs.map(s => { try { return new URL(s).hostname; } catch { return ''; } });
+        if (origins.some(o => /vercel\.com|vercel\.app/i.test(o)) || window.__VERCEL_INSIGHTS_ID__) _push('Vercel','Hosting');
+        if (origins.some(o => /netlify/i.test(o)) || window.__NETLIFY) _push('Netlify','Hosting');
+        if (origins.some(o => /cloudflare/i.test(o))) _push('Cloudflare','Hosting');
+        if (origins.some(o => /amazonaws\.com/i.test(o))) _push('AWS','Hosting');
+        if (origins.some(o => /firebase|firebaseapp/i.test(o)) || window.firebase) _push('Firebase','Hosting');
+        if (origins.some(o => /supabase/i.test(o)) || window.supabase) _push('Supabase','Hosting');
+        if (origins.some(o => /cdn\.jsdelivr\.net|cdnjs\.cloudflare\.com/i.test(o))) _push('jsDelivr / cdnjs','Hosting');
+      } catch {}
+
+      // Generator meta fallback
+      const genRaw = metas['generator'] || '';
+      if (genRaw && !techItems.some(t => genRaw.toLowerCase().includes(t.name.toLowerCase()))) {
+        const shortGen = genRaw.split(' ').slice(0, 3).join(' ');
+        if (shortGen) _push(shortGen, 'Platform');
       }
 
-      // CMS / generator from meta
-      const gen = metas['generator'] || '';
-      if (gen && !tech.some(t => gen.toLowerCase().includes(t.toLowerCase()))) {
-        const shortGen = gen.split(' ').slice(0,3).join(' ');
-        if (shortGen) tech.push(shortGen);
-      }
+      const tech = techItems;
 
       /* ── Page meta ── */
       const meta = {
