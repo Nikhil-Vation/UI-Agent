@@ -349,7 +349,7 @@ function switchTab(tabName) {
   els.quickActions.classList.toggle('hidden', !isIssues);
   els.filterBar.classList.toggle('hidden', !isIssues);
 
-  if (tabName === 'history') loadHistory();
+  if (tabName === 'export') loadHistory();
   if (tabName === 'tips') renderTips();
   if (tabName === 'checklist') renderChecklist();
   if (tabName === 'design') renderDesignTab();
@@ -417,7 +417,60 @@ function renderDesignTab() {
   const tokens = d.tokens || {};
   const tokenEntries = Object.entries(tokens);
 
-  // ── 1. Page Identity hero card ──
+  // ── 1. Tech Stack (top) ──
+  if (tech.length) {
+    const grouped = {};
+    for (const item of tech) {
+      const cat = item.category || 'Other';
+      if (!grouped[cat]) grouped[cat] = [];
+      grouped[cat].push(item.name);
+    }
+    const catOrder = [...TECH_CATEGORY_ORDER, 'Other'];
+    const sections = catOrder.filter(c => grouped[c]?.length);
+
+    // Build a primary-framework hero line (first Framework item)
+    const primaryFramework = grouped['Framework']?.[0] || grouped['Platform']?.[0] || null;
+    const primaryColor = primaryFramework ? (TECH_COLORS[primaryFramework] || '#6366f1') : '#6366f1';
+
+    els.designTechSection.innerHTML = `
+      <div class="di-stack-card" style="--accent:${primaryColor}">
+        <div class="di-stack-header">
+          <div class="di-stack-title-row">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+            <span class="di-stack-title">Tech Stack</span>
+            <span class="di-stack-count">${tech.length} detected</span>
+          </div>
+          ${primaryFramework ? `<div class="di-stack-primary" style="color:${primaryColor};border-color:${primaryColor}33;background:${primaryColor}12">${escHtml(primaryFramework)}</div>` : ''}
+        </div>
+        <div class="di-stack-accent-bar" style="background:linear-gradient(to right,${primaryColor},${primaryColor}44,transparent)"></div>
+        <div class="di-stack-body">
+          ${sections.map(cat => {
+            const catColor = grouped[cat].reduce((_, t) => TECH_COLORS[t] || _, 'rgba(255,255,255,0.15)');
+            return `
+            <div class="di-stack-section">
+              <div class="di-stack-cat-label">
+                ${TECH_CATEGORY_ICONS[cat] || ''}
+                <span>${cat}</span>
+                <span class="di-stack-cat-count">${grouped[cat].length}</span>
+              </div>
+              <div class="di-stack-items">
+                ${grouped[cat].map(t => {
+                  const col = TECH_COLORS[t] || 'rgba(255,255,255,0.18)';
+                  return `<div class="di-stack-item" style="--c:${col}" title="${escHtml(t)}">
+                    <span class="di-stack-dot" style="background:${col};box-shadow:0 0 6px ${col}88"></span>
+                    <span class="di-stack-name">${escHtml(t)}</span>
+                  </div>`;
+                }).join('')}
+              </div>
+            </div>`;
+          }).join('')}
+        </div>
+      </div>`;
+  } else {
+    els.designTechSection.innerHTML = '';
+  }
+
+  // ── 2. Page Identity hero card ──
   const faviconHtml = meta.favicon
     ? `<img class="di-favicon" src="${escHtml(meta.favicon)}" alt="" onerror="this.style.display='none'">`
     : `<div class="di-favicon-fallback"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></div>`;
@@ -444,7 +497,7 @@ function renderDesignTab() {
       </div>
     </div>`;
 
-  // ── 2. Colour palette ──
+  // ── 4. Colour palette ──
   if (colors.length) {
     // Build a wide gradient strip from the top colours
     const strip = colors.map(c => c.hex).join(', ');
@@ -476,7 +529,7 @@ function renderDesignTab() {
     els.designColorsSection.innerHTML = '';
   }
 
-  // ── 3. Typography ──
+  // ── 5. Typography ──
   if (fonts.length) {
     els.designFontsSection.innerHTML = `
       <div class="di-card">
@@ -504,49 +557,7 @@ function renderDesignTab() {
     els.designFontsSection.innerHTML = '';
   }
 
-  // ── 4. Tech Stack ──
-  if (tech.length) {
-    // Group by category
-    const grouped = {};
-    for (const item of tech) {
-      const cat = item.category || 'Other';
-      if (!grouped[cat]) grouped[cat] = [];
-      grouped[cat].push(item.name);
-    }
-    const catOrder = [...TECH_CATEGORY_ORDER, 'Other'];
-    const sections = catOrder.filter(c => grouped[c]?.length);
-
-    els.designTechSection.innerHTML = `
-      <div class="di-card">
-        <div class="di-card-header">
-          <span class="di-card-title">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-            Tech Stack
-          </span>
-          <span class="di-badge">${tech.length}</span>
-        </div>
-        ${sections.map(cat => `
-          <div class="di-tech-category">
-            <div class="di-tech-cat-label">
-              ${TECH_CATEGORY_ICONS[cat] || ''}
-              ${cat}
-            </div>
-            <div class="di-tech-grid">
-              ${grouped[cat].map(t => {
-                const col = TECH_COLORS[t] || 'rgba(255,255,255,0.20)';
-                return `<div class="di-tech-item">
-                  <span class="di-tech-dot" style="background:${col};box-shadow:0 0 5px ${col}55"></span>
-                  <span class="di-tech-name">${escHtml(t)}</span>
-                </div>`;
-              }).join('')}
-            </div>
-          </div>`).join('')}
-      </div>`;
-  } else {
-    els.designTechSection.innerHTML = '';
-  }
-
-  // ── 5. CSS Design Tokens ──
+  // ── 6. CSS Design Tokens ──
   if (tokenEntries.length) {
     const colorTokens = tokenEntries.filter(([,v]) => /^#|^rgb|^hsl/.test((v||'').trim()));
     const otherTokens = tokenEntries.filter(([,v]) => !/^#|^rgb|^hsl/.test((v||'').trim()));
@@ -787,10 +798,51 @@ function renderResults(analysis) {
 }
 
 function getGrade(score) {
-  if (score >= 90) return { label: 'Grade A', class: 'a' };
-  if (score >= 70) return { label: 'Grade B', class: 'b' };
-  if (score >= 50) return { label: 'Grade C', class: 'c' };
-  return { label: 'Grade F', class: 'f' };
+  if (score >= 90) return {
+    label: 'Grade A',
+    class: 'a',
+    summary: 'Excellent — meets WCAG 2.1 AA threshold',
+    nextLevel: null,
+    missing: ['Resolve any remaining minor/moderate issues to hit 100']
+  };
+  if (score >= 70) return {
+    label: 'Grade B',
+    class: 'b',
+    summary: 'Good — partial WCAG compliance',
+    nextLevel: 'A',
+    missing: [
+      'Eliminate all Critical & Serious violations (each costs 5–10 pts)',
+      'Fix color contrast issues to reach \u22654.5:1 ratio',
+      'Add missing alt text to all meaningful images',
+      'Ensure all interactive elements are keyboard-accessible'
+    ]
+  };
+  if (score >= 50) return {
+    label: 'Grade C',
+    class: 'c',
+    summary: 'Fair — significant accessibility gaps',
+    nextLevel: 'B',
+    missing: [
+      'Address all Critical violations immediately (legal exposure)',
+      'Add ARIA labels and roles to interactive components',
+      'Fix heading hierarchy (one h1, sequential h2→h3)',
+      'Add keyboard focus indicators to all focusable elements',
+      'Ensure form fields have associated labels'
+    ]
+  };
+  return {
+    label: 'Grade F',
+    class: 'f',
+    summary: 'Critical — fails basic accessibility requirements',
+    nextLevel: 'C',
+    missing: [
+      'Multiple critical violations block all assistive technology users',
+      'Page likely fails ADA / EN 301 549 legal compliance',
+      'Start with axe-core critical issues — fix those first',
+      'Add basic semantic HTML structure (headings, landmarks, labels)',
+      'Ensure every image has alt text and every button has a name'
+    ]
+  };
 }
 
 /* Auto-collapse timer handle — cancelled if user manually toggles */
@@ -2205,14 +2257,31 @@ function upgradeScoreCardWithLighthouse() {
  */
 function renderScoreBreakdown(axeScore, lhData) {
   const rows = [];
+  const grade = getGrade(axeScore);
 
-  // 1. Accea Score (axe-core weighted)
+  // 1. SiteScope 360 Score (axe-core weighted)
   rows.push(buildBreakdownRow(
-    'Accea Score', axeScore,
-    'axe-core', 'Severity-weighted: each rule scored out of 10. Critical costs 10pts, Serious 5, Moderate 2, Minor 1.'
+    'SiteScope Score', axeScore,
+    'axe-core', 'Severity-weighted ratio: pass weight ÷ (pass + violation weight) × 100. Critical costs 10pts, Serious 5, Moderate 2, Minor 1.'
   ));
 
-  // 2. Lighthouse scores
+  // 2. Grade card with what’s missing to reach the next level
+  if (grade.missing?.length) {
+    const nextLabel = grade.nextLevel ? `To reach Grade ${grade.nextLevel}:` : 'To reach 100:';
+    rows.push(`
+      <div class="breakdown-grade-card grade-${grade.class}">
+        <div class="breakdown-grade-header">
+          <span class="breakdown-grade-badge grade-${grade.class}">${grade.label}</span>
+          <span class="breakdown-grade-summary">${grade.summary}</span>
+        </div>
+        <div class="breakdown-grade-next">${nextLabel}</div>
+        <ul class="breakdown-grade-list">
+          ${grade.missing.map(m => `<li>${escapeHtml(m)}</li>`).join('')}
+        </ul>
+      </div>`);
+  }
+
+  // 3. Lighthouse scores
   if (lhData && !lhData.error) {
     rows.push(buildBreakdownRow('Lighthouse A11y', lhData.accessibility, 'Google PageSpeed', 'Real Lighthouse accessibility audit via PageSpeed Insights API (mobile).' ));
     rows.push(buildBreakdownRow('Performance',     lhData.performance,   'Lighthouse',       'Load speed, interactivity &amp; visual stability (Core Web Vitals).'));
@@ -2224,24 +2293,24 @@ function renderScoreBreakdown(axeScore, lhData) {
     rows.push(`<div class="breakdown-row loading-row"><span class="breakdown-label">Lighthouse</span><span class="breakdown-loading"><span class="lh-pulse-sm"></span> Loading — may take 30–60s</span></div>`);
   }
 
-  // 3. WCAG compliance hint
+  // 4. WCAG compliance hint
   const wcagLevel = axeScore >= 90 ? 'WCAG 2.1 AA — Likely Compliant' : axeScore >= 70 ? 'WCAG 2.1 AA — Partial' : 'WCAG 2.1 AA — Needs Work';
   const wcagClass = axeScore >= 90 ? 'green' : axeScore >= 70 ? 'orange' : 'red';
   rows.push(`<div class="breakdown-row wcag-row"><span class="breakdown-label">WCAG Level</span><span class="breakdown-wcag ${wcagClass}">${wcagLevel}</span></div>`);
 
-  // 4. Formula explanation — always visible at the bottom of the panel
+  // 5. Formula explanation
   rows.push(`
     <div class="breakdown-formula">
-      <div class="formula-title">ℹ️ How Accea Score is calculated</div>
-      <div class="formula-line"><span class="formula-code">Score = earned ÷ possible × 100</span></div>
-      <div class="formula-detail">Each rule contributes 10pts max. Violations lose points by severity:</div>
+      <div class="formula-title">ℹ️ How the SiteScope Score is calculated</div>
+      <div class="formula-line"><span class="formula-code">Score = pass‑weight ÷ (pass‑weight + violation‑weight) × 100</span></div>
+      <div class="formula-detail">Violations are weighted by severity (not subtracted):</div>
       <div class="formula-chips">
-        <span class="fchip critical">Critical −8</span>
-        <span class="fchip serious">Serious −5</span>
-        <span class="fchip moderate">Moderate −2</span>
-        <span class="fchip minor">Minor −1</span>
+        <span class="fchip critical">Critical ×10</span>
+        <span class="fchip serious">Serious ×5</span>
+        <span class="fchip moderate">Moderate ×2</span>
+        <span class="fchip minor">Minor ×1</span>
       </div>
-      <div class="formula-detail">Incomplete/needs-review items are <em>not</em> penalised.</div>
+      <div class="formula-detail">Incomplete / needs-review items are <em>not</em> penalised.</div>
     </div>`);
 
   els.breakdownRows.innerHTML = rows.join('');
@@ -2358,34 +2427,60 @@ function renderSEOCrossover(issues) {
 
 function renderImprovementInsights(issues, score) {
   const insights = [];
-
-  // Analyze what fixing specific issue types would do
   const issueIds = issues.map(i => i.id);
   const counts = currentAnalysis.counts || {};
+  const totalIssues = issues.length;
+  const lh = lighthouseData;
 
-  // Critical issues insight
+  // ── Business impact: legal / compliance risk ──
   if (counts.critical > 0) {
-    const potentialScore = Math.min(100, score + counts.critical * 12);
     insights.push({
       icon: '⚠',
-      title: `Fix ${counts.critical} critical issue${counts.critical > 1 ? 's' : ''}`,
-      desc: `Score would jump from ${score} → ~${potentialScore}. Critical issues block compliance and can trigger legal risk (ADA Title III).`,
-      tags: [{ text: `+${potentialScore - score} pts`, class: 'a11y' }, { text: 'HIGH PRIORITY', class: 'effort-l' }]
+      urgency: 'critical',
+      title: `Legal exposure: ${counts.critical} critical violation${counts.critical > 1 ? 's' : ''} detected`,
+      desc: `Websites with critical accessibility failures face ADA Title III lawsuits (US), AODA (Canada) and EN 301 549 (EU) enforcement. Over 4,000 digital accessibility lawsuits were filed in 2023 alone. These ${counts.critical} issues alone could make your site a target.`,
+      tags: [{ text: 'Legal Risk', class: 'effort-l' }, { text: 'Fix First', class: 'a11y' }]
     });
   }
 
-  // SEO crossover insight
+  // ── Business impact: lost audience / revenue ──
+  if (totalIssues > 0) {
+    const pctBlocked = Math.min(26, Math.round((totalIssues / 3) + 4));
+    insights.push({
+      icon: '📉',
+      urgency: score < 70 ? 'high' : 'medium',
+      title: `You may be losing ~${pctBlocked}% of potential customers`,
+      desc: `1 in 4 adults has a disability that affects how they use the web. Sites with poor accessibility see higher bounce rates, lower conversions and reduced time-on-page from assistive technology users. Fixing this isn’t charity — it’s capturing an audience your competitors may be ignoring.`,
+      tags: [{ text: `~${pctBlocked}% audience`, class: 'effort-m' }, { text: 'Revenue Impact', class: 'seo' }]
+    });
+  }
+
+  // ── Business impact: SEO & Google ranking ──
   const seoIssueCount = issues.filter(i => ISSUE_IMPACT_MAP[i.id]?.seo).length;
   if (seoIssueCount > 0) {
     insights.push({
-      icon: '●',
-      title: `${seoIssueCount} issues also hurt SEO`,
-      desc: `Fixing these accessibility issues will simultaneously improve your Google search ranking signals. Two-for-one impact.`,
-      tags: [{ text: 'SEO + A11y', class: 'seo' }, { text: `${seoIssueCount} issues`, class: 'lighthouse' }]
+      icon: '🔍',
+      urgency: 'medium',
+      title: `${seoIssueCount} issues are silently hurting your Google ranking`,
+      desc: `Google’s crawlers partially simulate accessibility. Missing alt text, broken heading structure and unlabelled buttons all reduce your page’s semantic clarity — and therefore your search rank. Fixing these gets you SEO and accessibility wins at the same time.`,
+      tags: [{ text: 'SEO Boost', class: 'seo' }, { text: `${seoIssueCount} issues`, class: 'lighthouse' }]
     });
   }
 
-  // Quick wins insight
+  // ── Business impact: brand trust & user perception ──
+  if (issueIds.includes('color-contrast')) {
+    const contrastIssue = issues.find(i => i.id === 'color-contrast');
+    const elemCount = contrastIssue?.elementCount || 0;
+    insights.push({
+      icon: '🎨',
+      urgency: 'medium',
+      title: `Low contrast makes your brand look unprofessional`,
+      desc: `${elemCount} text element${elemCount !== 1 ? 's' : ''} fail the minimum contrast ratio. Users — especially on mobile in bright conditions — will struggle to read your content and leave. Research shows poor readability directly correlates with a drop in brand trust and perceived quality.`,
+      tags: [{ text: 'Brand Trust', class: 'a11y' }, { text: `${elemCount} elements`, class: 'effort-m' }]
+    });
+  }
+
+  // ── Operational insight: quick wins available ──
   const quickFixableCount = issues.filter(i => ISSUE_IMPACT_MAP[i.id]?.quickWin).length;
   const quickFixTime = issues.reduce((sum, i) => {
     const impact = ISSUE_IMPACT_MAP[i.id];
@@ -2393,53 +2488,36 @@ function renderImprovementInsights(issues, score) {
   }, 0);
   if (quickFixableCount > 0) {
     insights.push({
-      icon: '▸',
-      title: `${quickFixableCount} issues fixable in ~${quickFixTime} minutes`,
-      desc: `These are low-effort fixes that collectively have the biggest impact on your scores. Start here.`,
-      tags: [{ text: `~${quickFixTime}min`, class: 'effort-s' }, { text: `${quickFixableCount} fixes`, class: 'lighthouse' }]
+      icon: '⚡',
+      urgency: 'low',
+      title: `${quickFixableCount} quick wins available — fix in ~${quickFixTime} minutes`,
+      desc: `These are small code changes (alt text, label additions, ARIA fixes) that your developer can knock out in one sitting. They collectively deliver the biggest score jump per hour of effort. Start here for immediate ROI.`,
+      tags: [{ text: `~${quickFixTime}min dev time`, class: 'effort-s' }, { text: `${quickFixableCount} fixes`, class: 'lighthouse' }]
     });
   }
 
-  // Heading structure insight
-  if (issueIds.includes('heading-order') || issueIds.includes('empty-heading')) {
-    insights.push({
-      icon: '▸',
-      title: 'Heading structure needs work',
-      desc: 'Fixing heading hierarchy improves both SEO content signals and screen reader navigation. Use one h1, then h2→h3 sequentially.',
-      tags: [{ text: 'A11y', class: 'a11y' }, { text: 'SEO', class: 'seo' }]
-    });
-  }
-
-  // ARIA cleanup insight
+  // ── Structural insight: keyboard & assistive tech users ──
   const ariaIssues = issues.filter(i => i.id?.startsWith('aria-'));
-  if (ariaIssues.length > 0) {
+  const keyboardIssues = issues.filter(i => ['tabindex', 'focus-trap', 'keyboard'].some(k => i.id?.includes(k)));
+  if (ariaIssues.length > 0 || keyboardIssues.length > 0) {
+    const count = ariaIssues.length + keyboardIssues.length;
     insights.push({
-      icon: '▸',
-      title: `${ariaIssues.length} ARIA issue${ariaIssues.length > 1 ? 's' : ''} detected`,
-      desc: 'Invalid ARIA is worse than no ARIA — it actively misleads assistive technology. Fix or remove these attributes.',
-      tags: [{ text: 'A11y', class: 'a11y' }, { text: 'Best Practices', class: 'lighthouse' }]
+      icon: '⌨',
+      urgency: 'high',
+      title: `Keyboard & screen reader users are blocked`,
+      desc: `${count} issue${count !== 1 ? 's' : ''} prevent users who rely on keyboards, switches or screen readers (JAWS, VoiceOver, NVDA) from navigating your site. These users often have higher purchase intent and loyalty — and you’re currently invisible to them.`,
+      tags: [{ text: 'Screen Readers', class: 'a11y' }, { text: `${count} issues`, class: 'effort-m' }]
     });
   }
 
-  // Color contrast insight
-  if (issueIds.includes('color-contrast')) {
-    const contrastIssue = issues.find(i => i.id === 'color-contrast');
-    const elemCount = contrastIssue?.elementCount || 0;
-    insights.push({
-      icon: '●',
-      title: `Color contrast fails on ${elemCount} element${elemCount !== 1 ? 's' : ''}`,
-      desc: 'Low contrast affects 8% of men (color blindness) and everyone in bright sunlight. Fix text to ≥4.5:1 ratio. This also reduces bounce rate — an indirect SEO signal.',
-      tags: [{ text: 'A11y', class: 'a11y' }, { text: `${elemCount} elements`, class: 'effort-m' }]
-    });
-  }
-
-  // Perfect score encouragement
+  // ── Positive reinforcement for high scores ──
   if (score >= 90 && issues.length <= 3) {
     insights.push({
       icon: '★',
-      title: 'Almost perfect! Just a few tweaks away',
-      desc: `You're ${100 - score} points from a perfect 100. Fix the remaining ${issues.length} issue${issues.length !== 1 ? 's' : ''} for full compliance.`,
-      tags: [{ text: 'NEARLY THERE', class: 'effort-s' }]
+      urgency: 'low',
+      title: `You’re ${100 - score} points from a perfect score — almost there`,
+      desc: `Your site is already accessible to the vast majority of users. Fixing the last ${issues.length} issue${issues.length !== 1 ? 's' : ''} earns you full WCAG 2.1 AA compliance — a credible trust signal you can put in your footer, pitch deck and client proposals.`,
+      tags: [{ text: 'Near Perfect', class: 'effort-s' }, { text: 'Brand Signal', class: 'seo' }]
     });
   }
 
@@ -2448,9 +2526,12 @@ function renderImprovementInsights(issues, score) {
     return;
   }
 
+  const urgencyOrder = { critical: 0, high: 1, medium: 2, low: 3 };
+  insights.sort((a, b) => (urgencyOrder[a.urgency] || 9) - (urgencyOrder[b.urgency] || 9));
+
   els.improvementList.innerHTML = insights.map((ins, idx) => `
-    <li style="animation-delay:${idx * 0.05}s">
-      <span class="tip-icon">${ins.icon}</span>
+    <li class="insight-item insight-${ins.urgency}" style="animation-delay:${idx * 0.05}s">
+      <span class="tip-icon insight-icon-${ins.urgency}">${ins.icon}</span>
       <div class="tip-content">
         <div class="tip-title">${escapeHtml(ins.title)}</div>
         <div class="tip-desc">${escapeHtml(ins.desc)}</div>

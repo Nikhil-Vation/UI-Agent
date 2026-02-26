@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Accea Agent — Accessibility Scanner</title>
+  <title>SiteScope 360 — Site Diagnostics</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
@@ -17,7 +17,7 @@
   <header class="header">
     <div class="header-left">
       <img src="../icons/icon-48.png" alt="" class="logo" width="26" height="26">
-      <h1>Accea Agent</h1>
+      <h1>SiteScope 360</h1>
     </div>
     <div class="header-right">
       <button id="btn-settings" class="icon-btn" title="Settings" aria-label="Settings">⚙️</button>
@@ -36,7 +36,7 @@
         <span class="intro-icon intro-icon-3">✨</span>
       </div>
       <h2 class="intro-title">Make the Web <span id="typewriter-word" class="typewriter-word"></span><span class="intro-cursor">|</span></h2>
-      <p class="intro-subtitle">Accea Agent scans any webpage for <strong>WCAG accessibility issues</strong>, gives you an instant score, and uses <strong>AI to suggest code fixes</strong> — all while keeping your data <em>100% private</em>.</p>
+      <p class="intro-subtitle">SiteScope 360 gives you a full-spectrum diagnosis of any webpage — <strong>accessibility audit</strong>, <strong>tech stack</strong>, <strong>design profile</strong> and <strong>AI fix suggestions</strong> — all 100% private, nothing leaves your browser.</p>
       <div class="intro-features">
         <div class="intro-feature"><span class="intro-feature-icon">🔍</span><span class="intro-feature-text">One-click scan</span></div>
         <div class="intro-feature"><span class="intro-feature-icon">🤖</span><span class="intro-feature-text">AI code suggestions</span></div>
@@ -103,7 +103,7 @@
       </button>
       <button class="tab-btn" data-tab="design">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="13.5" cy="6.5" r="0.5" fill="currentColor"/><circle cx="17.5" cy="10.5" r="0.5" fill="currentColor"/><circle cx="8.5" cy="7.5" r="0.5" fill="currentColor"/><circle cx="6.5" cy="12.5" r="0.5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>
-        Design
+        Technology
       </button>
       <button class="tab-btn" data-tab="checklist">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
@@ -112,10 +112,6 @@
       <button class="tab-btn" data-tab="tips">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
         Insights
-      </button>
-      <button class="tab-btn" data-tab="history">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-        History
       </button>
       <button class="tab-btn" data-tab="export">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
@@ -196,18 +192,6 @@
       </div>
     </div>
 
-    <!-- ═══ Tab: History ═══ -->
-    <div id="tab-history" class="tab-content">
-      <div class="history-container">
-        <div id="history-empty" class="empty-state">
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.3"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-          <div class="empty-title">No scan history yet</div>
-          <div class="empty-sub">Scan a page to start tracking</div>
-        </div>
-        <ul id="history-list" class="history-list"></ul>
-      </div>
-    </div>
-
     <!-- ═══ Tab: Tips ═══ -->
     <div id="tab-tips" class="tab-content">
       <div class="tips-container">
@@ -261,10 +245,10 @@
         <p>Scan a page to see its design profile</p>
       </div>
       <div id="design-content" class="design-content hidden">
+        <div class="design-section" id="design-tech-section"></div>
         <div class="design-section" id="design-meta-section"></div>
         <div class="design-section" id="design-colors-section"></div>
         <div class="design-section" id="design-fonts-section"></div>
-        <div class="design-section" id="design-tech-section"></div>
         <div class="design-section" id="design-tokens-section"></div>
       </div>
     </div>
@@ -292,6 +276,22 @@
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg>
             <span class="export-card-label">Clipboard</span>
             <span class="export-card-desc">Copy summary</span>
+          </div>
+        </div>
+
+        <!-- ── Scan History ── -->
+        <div class="export-history-section">
+          <div class="export-section-header">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            Scan History
+          </div>
+          <div class="history-container">
+            <div id="history-empty" class="empty-state">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.3"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              <div class="empty-title">No scan history yet</div>
+              <div class="empty-sub">Scan a page to start tracking</div>
+            </div>
+            <ul id="history-list" class="history-list"></ul>
           </div>
         </div>
       </div>

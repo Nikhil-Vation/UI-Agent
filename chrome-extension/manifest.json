@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Accea Agent — Accessibility Scanner & Fixer",
+  "name": "SiteScope 360 — Site Diagnostics & Accessibility",
   "version": "1.0.0",
-  "description": "Privacy-first accessibility scanner with AI-powered code fixes. Runs entirely in your browser — no data leaves your machine.",
+  "description": "Full-spectrum site diagnostics: accessibility audit, tech stack inspector, design profiler & AI-powered fix suggestions. 100% private — no data leaves your browser.",
   "permissions": [
     "activeTab",
     "scripting",
