@@ -113,6 +113,7 @@ const els = {
   designColorsSection:$('#design-colors-section'),
   designFontsSection: $('#design-fonts-section'),
   designTechSection:  $('#design-tech-section'),
+  designUpgradesSection: $('#design-upgrades-section'),
   designTokensSection:$('#design-tokens-section'),
 
   // Tips tab
@@ -400,6 +401,132 @@ const TECH_CATEGORY_ICONS = {
   'Hosting':   '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>',
 };
 
+/**
+ * Tech upgrade suggestions — keyed by detected tech name.
+ * Each entry: { to, toColor, reason, gains[] }
+ */
+const TECH_UPGRADE_MAP = {
+  // Frameworks
+  'React': {
+    to: 'Next.js', toColor: '#ffffff',
+    reason: 'React alone has no server-side rendering. Next.js adds SSR/SSG, automatic code splitting and built-in image optimisation — typical LCP improvement of 30–60%.',
+    gains: ['Server-side rendering', 'Built-in image optimisation', 'Automatic code splitting', 'Better Core Web Vitals']
+  },
+  'Vue': {
+    to: 'Nuxt', toColor: '#00dc82',
+    reason: 'Vue SPA sends all JS to the browser first. Nuxt adds SSR and static generation so pages load pre-rendered HTML — measurably faster FCP and SEO indexing.',
+    gains: ['SSR / static generation', 'Faster FCP', 'SEO-friendly rendering', 'File-based routing']
+  },
+  'jQuery': {
+    to: 'Vanilla JS or Alpine.js', toColor: '#77c1d2',
+    reason: 'jQuery adds ~87 KB to every page load and forces synchronous DOM operations. Modern JS and Alpine.js achieve the same results with near-zero overhead.',
+    gains: ['~87 KB bundle reduction', 'Faster Time-to-Interactive', 'No extra HTTP request', 'Tree-shakeable']
+  },
+  'Moment.js': {
+    to: 'Day.js', toColor: '#f8c307',
+    reason: 'Moment.js ships ~67 KB minified and is no longer actively maintained. Day.js is API-compatible at just 2 KB — a 97% bundle size reduction.',
+    gains: ['67 KB → 2 KB (97% smaller)', 'Actively maintained', 'Same API surface', 'Tree-shakeable locales']
+  },
+  'Webpack': {
+    to: 'Vite', toColor: '#bd34fe',
+    reason: 'Webpack bundles everything upfront, causing slow dev starts and rebuilds. Vite uses native ES modules — dev server starts in <300 ms vs. seconds, and builds are 5–10× faster.',
+    gains: ['<300ms dev server start', '5–10× faster builds', 'Native ESM hot reload', 'Smaller output bundles']
+  },
+  'Bootstrap': {
+    to: 'Tailwind CSS', toColor: '#38bdf8',
+    reason: 'Bootstrap ships ~150 KB of CSS including styles you never use. Tailwind purges unused classes at build time, resulting in final CSS files of 5–15 KB — a 10× reduction.',
+    gains: ['~150 KB → ~10 KB CSS', 'No specificity conflicts', 'Design token consistency', 'Zero unused styles']
+  },
+  'Gatsby': {
+    to: 'Next.js or Astro', toColor: '#ff5d01',
+    reason: 'Gatsby\'s build times grow exponentially with content volume and ships heavy JS runtimes. Next.js and Astro offer partial hydration and incremental builds with far better performance scores.',
+    gains: ['Faster incremental builds', 'Partial / zero hydration', 'Better Lighthouse scores', 'Smaller JS runtime']
+  },
+  'WordPress': {
+    to: 'Headless WordPress + Next.js', toColor: '#ffffff',
+    reason: 'Traditional WordPress renders pages server-side on every request and loads dozens of plugin scripts. A headless setup decouples the CMS from a static front-end — typical Lighthouse performance jumps from 40s to 90s.',
+    gains: ['Lighthouse perf 40→90+', 'CDN-served static pages', 'Plugin JS eliminated', 'Full design control']
+  },
+  'Wix': {
+    to: 'Webflow or custom stack', toColor: '#4353ff',
+    reason: 'Wix injects large proprietary JS bundles and limits technical control. Migrating to Webflow or a custom stack typically improves performance scores by 20–40 points and removes vendor lock-in.',
+    gains: ['20–40pt Lighthouse gain', 'No proprietary bloat', 'Full code ownership', 'Better SEO control']
+  },
+  'Squarespace': {
+    to: 'Webflow or Astro', toColor: '#4353ff',
+    reason: 'Squarespace bundles heavy template JS and restricts custom optimisations. A migration typically yields 30–50% faster page loads and full control over performance budgets.',
+    gains: ['30–50% faster loads', 'Full performance control', 'No template overhead', 'Better Core Web Vitals']
+  },
+  'Lodash': {
+    to: 'Native ES2020+ methods', toColor: '#22d3ee',
+    reason: 'Lodash adds ~70 KB but most of its functions are now native in modern JS (optional chaining, Array.flat, Object.entries etc.). Replacing it eliminates the dependency entirely.',
+    gains: ['~70 KB bundle reduction', 'Zero dependencies', 'Tree-shakeable alternatives', 'Faster parse time']
+  },
+  'Axios': {
+    to: 'Native fetch + async/await', toColor: '#22d3ee',
+    reason: 'Axios adds ~14 KB and wraps the native Fetch API. Modern browsers have full Fetch support — removing Axios saves the network request, parse time, and 14 KB of JS execution.',
+    gains: ['14 KB bundle reduction', 'Zero dependencies', 'Native browser API', 'Smaller JS parse time']
+  },
+  'Hotjar': {
+    to: 'PostHog (open-source)', toColor: '#f76b15',
+    reason: 'Hotjar injects a synchronous tracking script that delays page interactivity. PostHog is open-source, privacy-first, self-hostable, and has no measurable impact on TTI.',
+    gains: ['No TTI impact', 'Privacy-first / GDPR', 'Self-hostable', 'Product analytics included']
+  },
+  'Google Analytics': {
+    to: 'Plausible or PostHog', toColor: '#f76b15',
+    reason: 'GA4 adds ~45 KB and blocks the main thread during cookie consent resolution. Plausible is 1 KB, cookieless and GDPR-compliant with no consent banner needed.',
+    gains: ['45 KB → 1 KB script', 'No consent banner needed', 'GDPR compliant', 'Faster TTI']
+  },
+  'Sass / SCSS': {
+    to: 'CSS Custom Properties + PostCSS', toColor: '#38bdf8',
+    reason: 'Sass requires a build step and outputs static CSS. Native CSS custom properties (variables) give you dynamic theming at runtime with zero build overhead and full browser support.',
+    gains: ['Runtime theming', 'No build step needed', 'Smaller toolchain', 'Dynamic values in JS']
+  },
+};
+
+/**
+ * Render tech upgrade suggestions into the Technology tab.
+ * Only shows items where the detected tech has a known upgrade path.
+ */
+function renderTechUpgrades(tech, container) {
+  const suggestions = tech
+    .map(item => {
+      const upg = TECH_UPGRADE_MAP[item.name];
+      if (!upg) return null;
+      return { from: item.name, fromColor: TECH_COLORS[item.name] || '#888', ...upg };
+    })
+    .filter(Boolean);
+
+  if (!suggestions.length) {
+    container.innerHTML = '';
+    return;
+  }
+
+  container.innerHTML = `
+    <div class="tu-section">
+      <div class="tu-header">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+        <span class="tu-header-title">Upgrade Opportunities</span>
+        <span class="tu-header-badge">${suggestions.length}</span>
+      </div>
+      <div class="tu-cards">
+        ${suggestions.map((s, i) => `
+          <div class="tu-card" style="animation-delay:${i * 0.06}s">
+            <div class="tu-arrow-row">
+              <span class="tu-chip" style="background:${s.fromColor}18;color:${s.fromColor};border-color:${s.fromColor}33">${escHtml(s.from)}</span>
+              <svg class="tu-arrow" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+              <span class="tu-chip tu-chip-to" style="background:${s.toColor}18;color:${s.toColor};border-color:${s.toColor}33">${escHtml(s.to)}</span>
+            </div>
+            <div class="tu-reason">${escHtml(s.reason)}</div>
+            <div class="tu-gains">
+              ${s.gains.map(g => `<span class="tu-gain">✓ ${escHtml(g)}</span>`).join('')}
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    </div>`;
+}
+
 function renderDesignTab() {
   const d = currentAnalysis?.designInfo;
   if (!d) {
@@ -469,6 +596,9 @@ function renderDesignTab() {
   } else {
     els.designTechSection.innerHTML = '';
   }
+
+  // ── 1b. Tech Upgrade Suggestions ──
+  if (els.designUpgradesSection) renderTechUpgrades(tech, els.designUpgradesSection);
 
   // ── 2. Page Identity hero card ──
   const faviconHtml = meta.favicon
@@ -734,9 +864,9 @@ function renderResults(analysis) {
   els.scoreInfoBtn.classList.remove('hidden');
   renderScoreBreakdown(score, null);
 
-  // Always-visible attribution + loading hint
+  // Always-visible attribution — Lighthouse loads silently in background
   els.scoreAttribution.classList.remove('hidden');
-  els.lhLoadingHint.classList.remove('hidden');
+  els.lhLoadingHint.classList.add('hidden');
 
   const status = analysis.complianceStatus || 'Unknown';
   els.scoreStatus.textContent = status;
@@ -798,49 +928,36 @@ function renderResults(analysis) {
 }
 
 function getGrade(score) {
-  if (score >= 90) return {
+  if (score >= 70) return {
     label: 'Grade A',
     class: 'a',
-    summary: 'Excellent — meets WCAG 2.1 AA threshold',
+    summary: 'Excellent — meets WCAG 2.1 AA standards',
     nextLevel: null,
-    missing: ['Resolve any remaining minor/moderate issues to hit 100']
+    missing: ['Resolve any remaining minor/moderate issues to reach a perfect score']
   };
-  if (score >= 70) return {
+  if (score >= 40) return {
     label: 'Grade B',
     class: 'b',
-    summary: 'Good — partial WCAG compliance',
+    summary: 'Mediocre — partial compliance, room for improvement',
     nextLevel: 'A',
     missing: [
       'Eliminate all Critical & Serious violations (each costs 5–10 pts)',
-      'Fix color contrast issues to reach \u22654.5:1 ratio',
+      'Fix color contrast issues to reach ≥4.5:1 ratio',
       'Add missing alt text to all meaningful images',
       'Ensure all interactive elements are keyboard-accessible'
     ]
   };
-  if (score >= 50) return {
+  return {
     label: 'Grade C',
     class: 'c',
-    summary: 'Fair — significant accessibility gaps',
+    summary: 'Poor — fails basic accessibility requirements',
     nextLevel: 'B',
     missing: [
-      'Address all Critical violations immediately (legal exposure)',
-      'Add ARIA labels and roles to interactive components',
-      'Fix heading hierarchy (one h1, sequential h2→h3)',
-      'Add keyboard focus indicators to all focusable elements',
-      'Ensure form fields have associated labels'
-    ]
-  };
-  return {
-    label: 'Grade F',
-    class: 'f',
-    summary: 'Critical — fails basic accessibility requirements',
-    nextLevel: 'C',
-    missing: [
-      'Multiple critical violations block all assistive technology users',
+      'Multiple critical violations block assistive technology users',
       'Page likely fails ADA / EN 301 549 legal compliance',
-      'Start with axe-core critical issues — fix those first',
-      'Add basic semantic HTML structure (headings, landmarks, labels)',
-      'Ensure every image has alt text and every button has a name'
+      'Address all Critical violations immediately (legal exposure)',
+      'Add ARIA labels, semantic HTML structure, and keyboard focus indicators',
+      'Ensure every image has alt text and every form field has a label'
     ]
   };
 }
@@ -1156,42 +1273,13 @@ async function prefetchSuggestions() {
 
 /**
  * Update the prefetch status banner.
+ * Suggestions load silently in the background — banner stays hidden.
+ * Button states are still updated via updateSuggestButtonStates().
  * @param {'working'|'done'|'hide'} state
  */
 function updatePrefetchStatus(state) {
-  if (!els.prefetchStatus) return;
-
-  if (state === 'hide') {
-    els.prefetchStatus.classList.add('hidden');
-    return;
-  }
-
-  els.prefetchStatus.classList.remove('hidden');
-
-  if (state === 'working') {
-    const pct = prefetchTotal > 0 ? Math.round((prefetchDone / prefetchTotal) * 100) : 0;
-    els.prefetchIcon.innerHTML = '<span class="prefetch-spinner"></span>';
-    els.prefetchText.textContent = prefetchDone === 0 ? 'Preparing AI suggestions…' : 'AI is generating code suggestions…';
-    els.prefetchProgress.textContent = `${prefetchDone}/${prefetchTotal}`;
-    els.prefetchBarFill.style.width = pct + '%';
-    els.prefetchStatus.className = 'prefetch-status working';
-  } else if (state === 'done') {
-    const count = suggestionCache.size;
-    els.prefetchIcon.innerHTML = SVG.checkCircle;
-    els.prefetchText.textContent = count > 0
-      ? `✅ All ${count} suggestion${count > 1 ? 's' : ''} ready — click Suggest to view`
-      : 'No suggestions available';
-    els.prefetchProgress.textContent = '';
-    els.prefetchBarFill.style.width = '100%';
-    els.prefetchStatus.className = 'prefetch-status done';
-
-    // Auto-fade after 10 seconds
-    setTimeout(() => {
-      if (!prefetchInProgress) {
-        els.prefetchStatus.classList.add('fade-out');
-      }
-    }, 10000);
-  }
+  // Always keep hidden — prefetching runs in background silently
+  if (els.prefetchStatus) els.prefetchStatus.classList.add('hidden');
 }
 
 /**
@@ -2009,17 +2097,17 @@ function renderTips() {
   const score = currentAnalysis.auditScore || 0;
   const issueIds = issues.map(i => i.id);
 
-  // ── 1. Lighthouse Scores (real or loading) ──
+  // ── 1. Business Impact Insights (top — most eye-opening) ──
+  renderImprovementInsights(issues, score);
+
+  // ── 2. Lighthouse Scores (real or loading) ──
   renderLighthouseSection();
 
-  // ── 2. Quick Wins ──
+  // ── 3. Quick Wins ──
   renderQuickWins(issues);
 
-  // ── 3. SEO Crossover ──
+  // ── 4. SEO Crossover ──
   renderSEOCrossover(issues);
-
-  // ── 4. Improvement Insights ──
-  renderImprovementInsights(issues, score);
 }
 
 /* ═══════ Real Lighthouse Scores ═══════ */
@@ -2426,120 +2514,152 @@ function renderSEOCrossover(issues) {
 }
 
 function renderImprovementInsights(issues, score) {
-  const insights = [];
-  const issueIds = issues.map(i => i.id);
+  const cards = [];
   const counts = currentAnalysis.counts || {};
   const totalIssues = issues.length;
-  const lh = lighthouseData;
 
-  // ── Business impact: legal / compliance risk ──
+  // ─── Card 1: Legal / compliance fire alarm ───────────────────────────────
   if (counts.critical > 0) {
-    insights.push({
-      icon: '⚠',
+    cards.push({
       urgency: 'critical',
-      title: `Legal exposure: ${counts.critical} critical violation${counts.critical > 1 ? 's' : ''} detected`,
-      desc: `Websites with critical accessibility failures face ADA Title III lawsuits (US), AODA (Canada) and EN 301 549 (EU) enforcement. Over 4,000 digital accessibility lawsuits were filed in 2023 alone. These ${counts.critical} issues alone could make your site a target.`,
-      tags: [{ text: 'Legal Risk', class: 'effort-l' }, { text: 'Fix First', class: 'a11y' }]
+      icon: '⚖️',
+      stat: `${counts.critical}`,
+      statLabel: `critical violation${counts.critical > 1 ? 's' : ''}`,
+      title: 'Legal action risk — your site may not meet compliance standards',
+      desc: `ADA Title III lawsuits hit over 4,600 businesses in 2023 — and every case started with unresolved critical accessibility violations. Regulatory bodies in the US (ADA), Canada (AODA) and EU (EN 301 549) don\'t distinguish by company size. A single DOJ complaint can cost $55,000–$150,000 before proceedings even begin.`,
+      cta: 'Address these first',
+      ctaClass: 'icard-cta-critical',
+      tags: [{ label: 'ADA Risk', cls: 'itag-legal' }, { label: 'EN 301 549', cls: 'itag-legal' }, { label: 'Fix First', cls: 'itag-urgent' }]
     });
   }
 
-  // ── Business impact: lost audience / revenue ──
+  // ─── Card 2: Invisible audience / lost revenue ────────────────────────────
   if (totalIssues > 0) {
-    const pctBlocked = Math.min(26, Math.round((totalIssues / 3) + 4));
-    insights.push({
-      icon: '📉',
-      urgency: score < 70 ? 'high' : 'medium',
-      title: `You may be losing ~${pctBlocked}% of potential customers`,
-      desc: `1 in 4 adults has a disability that affects how they use the web. Sites with poor accessibility see higher bounce rates, lower conversions and reduced time-on-page from assistive technology users. Fixing this isn’t charity — it’s capturing an audience your competitors may be ignoring.`,
-      tags: [{ text: `~${pctBlocked}% audience`, class: 'effort-m' }, { text: 'Revenue Impact', class: 'seo' }]
+    const pct = Math.min(26, Math.round((totalIssues / 3) + 4));
+    const critAmt = counts.critical > 0 ? ` and ${counts.critical} critical barrier${counts.critical > 1 ? 's' : ''} that block screen readers entirely` : '';
+    cards.push({
+      urgency: counts.critical > 0 ? 'high' : 'medium',
+      icon: '👥',
+      stat: `~${pct}%`,
+      statLabel: 'of visitors can\'t use your site',
+      title: '1 in 4 adults has a disability — you\'re turning them away',
+      desc: `With ${totalIssues} accessibility issue${totalIssues > 1 ? 's' : ''}${critAmt}, a significant slice of your audience hits a wall and leaves. That\'s not just a moral issue — it\'s a revenue leak. People with disabilities control over $490B in disposable income in the US alone. Your competitors who fix this first take that market.`,
+      cta: 'Capture this audience',
+      ctaClass: 'icard-cta-high',
+      tags: [{ label: `~${pct}% blocked`, cls: 'itag-revenue' }, { label: '$490B market', cls: 'itag-revenue' }, { label: 'Retention', cls: 'itag-perf' }]
     });
   }
 
-  // ── Business impact: SEO & Google ranking ──
-  const seoIssueCount = issues.filter(i => ISSUE_IMPACT_MAP[i.id]?.seo).length;
-  if (seoIssueCount > 0) {
-    insights.push({
-      icon: '🔍',
-      urgency: 'medium',
-      title: `${seoIssueCount} issues are silently hurting your Google ranking`,
-      desc: `Google’s crawlers partially simulate accessibility. Missing alt text, broken heading structure and unlabelled buttons all reduce your page’s semantic clarity — and therefore your search rank. Fixing these gets you SEO and accessibility wins at the same time.`,
-      tags: [{ text: 'SEO Boost', class: 'seo' }, { text: `${seoIssueCount} issues`, class: 'lighthouse' }]
-    });
-  }
-
-  // ── Business impact: brand trust & user perception ──
-  if (issueIds.includes('color-contrast')) {
-    const contrastIssue = issues.find(i => i.id === 'color-contrast');
-    const elemCount = contrastIssue?.elementCount || 0;
-    insights.push({
-      icon: '🎨',
-      urgency: 'medium',
-      title: `Low contrast makes your brand look unprofessional`,
-      desc: `${elemCount} text element${elemCount !== 1 ? 's' : ''} fail the minimum contrast ratio. Users — especially on mobile in bright conditions — will struggle to read your content and leave. Research shows poor readability directly correlates with a drop in brand trust and perceived quality.`,
-      tags: [{ text: 'Brand Trust', class: 'a11y' }, { text: `${elemCount} elements`, class: 'effort-m' }]
-    });
-  }
-
-  // ── Operational insight: quick wins available ──
-  const quickFixableCount = issues.filter(i => ISSUE_IMPACT_MAP[i.id]?.quickWin).length;
-  const quickFixTime = issues.reduce((sum, i) => {
-    const impact = ISSUE_IMPACT_MAP[i.id];
-    return sum + (impact?.quickWin ? (impact.timeMin || 5) : 0);
-  }, 0);
-  if (quickFixableCount > 0) {
-    insights.push({
-      icon: '⚡',
-      urgency: 'low',
-      title: `${quickFixableCount} quick wins available — fix in ~${quickFixTime} minutes`,
-      desc: `These are small code changes (alt text, label additions, ARIA fixes) that your developer can knock out in one sitting. They collectively deliver the biggest score jump per hour of effort. Start here for immediate ROI.`,
-      tags: [{ text: `~${quickFixTime}min dev time`, class: 'effort-s' }, { text: `${quickFixableCount} fixes`, class: 'lighthouse' }]
-    });
-  }
-
-  // ── Structural insight: keyboard & assistive tech users ──
-  const ariaIssues = issues.filter(i => i.id?.startsWith('aria-'));
-  const keyboardIssues = issues.filter(i => ['tabindex', 'focus-trap', 'keyboard'].some(k => i.id?.includes(k)));
-  if (ariaIssues.length > 0 || keyboardIssues.length > 0) {
-    const count = ariaIssues.length + keyboardIssues.length;
-    insights.push({
-      icon: '⌨',
+  // ─── Card 3: Google is penalising you silently ────────────────────────────
+  const seoIssues = issues.filter(i => ISSUE_IMPACT_MAP[i.id]?.seo);
+  if (seoIssues.length > 0) {
+    cards.push({
       urgency: 'high',
-      title: `Keyboard & screen reader users are blocked`,
-      desc: `${count} issue${count !== 1 ? 's' : ''} prevent users who rely on keyboards, switches or screen readers (JAWS, VoiceOver, NVDA) from navigating your site. These users often have higher purchase intent and loyalty — and you’re currently invisible to them.`,
-      tags: [{ text: 'Screen Readers', class: 'a11y' }, { text: `${count} issues`, class: 'effort-m' }]
+      icon: '🔍',
+      stat: `${seoIssues.length}`,
+      statLabel: `issue${seoIssues.length > 1 ? 's' : ''} hurting your ranking`,
+      title: 'Google is penalising your site and you don\'t know it',
+      desc: `Missing alt text, broken heading structure and unlabelled buttons all degrade your semantic markup — the same signals Google uses to rank pages. These ${seoIssues.length} issue${seoIssues.length > 1 ? 's' : ''} may be why you\'re on page 2 instead of page 1. Fixing them is a free SEO upgrade bundled with an accessibility fix.`,
+      cta: 'Boost your ranking',
+      ctaClass: 'icard-cta-high',
+      tags: [{ label: 'SEO Ranking', cls: 'itag-seo' }, { label: 'Core Web Vitals', cls: 'itag-seo' }, { label: 'Free Win', cls: 'itag-perf' }]
     });
   }
 
-  // ── Positive reinforcement for high scores ──
-  if (score >= 90 && issues.length <= 3) {
-    insights.push({
-      icon: '★',
+  // ─── Card 4: Brand trust erosion (contrast) ───────────────────────────────
+  const contrastIssue = issues.find(i => i.id === 'color-contrast');
+  if (contrastIssue) {
+    const n = contrastIssue.elementCount || 'Multiple';
+    cards.push({
+      urgency: 'medium',
+      icon: '🎨',
+      stat: `${n}`,
+      statLabel: 'text elements fail contrast',
+      title: 'Your text is hard to read — users are forming a bad impression',
+      desc: `Low contrast text isn\'t just an accessibility issue — it signals poor craftsmanship. Stanford research shows users judge website credibility within 50 milliseconds, and readability is a primary signal. On mobile in bright conditions, these ${n} elements become nearly invisible, causing abandonment before your CTA is even seen.`,
+      cta: 'Improve first impression',
+      ctaClass: 'icard-cta-medium',
+      tags: [{ label: 'Brand Trust', cls: 'itag-brand' }, { label: 'Mobile UX', cls: 'itag-perf' }, { label: 'Readability', cls: 'itag-brand' }]
+    });
+  }
+
+  // ─── Card 5: Keyboard / screen reader users blocked ───────────────────────
+  const ariaIssues  = issues.filter(i => i.id?.startsWith('aria-'));
+  const kbIssues    = issues.filter(i => ['tabindex','focus','keyboard'].some(k => i.id?.includes(k)));
+  const blockedCount = ariaIssues.length + kbIssues.length;
+  if (blockedCount > 0) {
+    cards.push({
+      urgency: counts.critical > 0 ? 'high' : 'medium',
+      icon: '⌨️',
+      stat: `${blockedCount}`,
+      statLabel: 'barriers for keyboard users',
+      title: 'Power users and disabled users are completely locked out',
+      desc: `Keyboard-only users, switch device users, and screen reader users (JAWS, VoiceOver, NVDA) cannot navigate your site due to ${blockedCount} ARIA and focus issue${blockedCount > 1 ? 's' : ''}. These are often your most loyal, high-intent users. B2B enterprise buyers frequently use keyboard navigation. You\'re invisible to them.`,
+      cta: 'Unlock every user',
+      ctaClass: 'icard-cta-medium',
+      tags: [{ label: 'Screen Readers', cls: 'itag-legal' }, { label: 'JAWS / VoiceOver', cls: 'itag-brand' }, { label: `${blockedCount} barriers`, cls: 'itag-urgent' }]
+    });
+  }
+
+  // ─── Card 6: Quick wins ROI ───────────────────────────────────────────────
+  const quickWins = issues.filter(i => ISSUE_IMPACT_MAP[i.id]?.quickWin);
+  const totalMins = quickWins.reduce((s, i) => s + (ISSUE_IMPACT_MAP[i.id]?.timeMin || 5), 0);
+  if (quickWins.length > 0) {
+    cards.push({
       urgency: 'low',
-      title: `You’re ${100 - score} points from a perfect score — almost there`,
-      desc: `Your site is already accessible to the vast majority of users. Fixing the last ${issues.length} issue${issues.length !== 1 ? 's' : ''} earns you full WCAG 2.1 AA compliance — a credible trust signal you can put in your footer, pitch deck and client proposals.`,
-      tags: [{ text: 'Near Perfect', class: 'effort-s' }, { text: 'Brand Signal', class: 'seo' }]
+      icon: '⚡',
+      stat: `~${totalMins}min`,
+      statLabel: 'of dev time to fix',
+      title: `${quickWins.length} high-impact fixes your developer can ship today`,
+      desc: `These are one-line code changes — adding alt="" to an image, a <label> to a form, an aria-label to a button. Each fix removes a real barrier for real users. One dev session, meaningful score boost, and a defensible compliance improvement. The ROI per hour here beats almost any other dev task.`,
+      cta: 'Start here',
+      ctaClass: 'icard-cta-low',
+      tags: [{ label: `${quickWins.length} fixes`, cls: 'itag-perf' }, { label: `~${totalMins}min`, cls: 'itag-perf' }, { label: 'Highest ROI', cls: 'itag-revenue' }]
     });
   }
 
-  if (insights.length === 0) {
+  // ─── Card 7: Near-perfect encouragement ──────────────────────────────────
+  if (score >= 90 && totalIssues <= 3) {
+    cards.push({
+      urgency: 'low',
+      icon: '🏆',
+      stat: `${100 - score}pts`,
+      statLabel: 'from a perfect score',
+      title: 'You\'re this close to a compliance badge worth putting everywhere',
+      desc: `Full WCAG 2.1 AA compliance is a trust signal you can put in your footer, pitch deck, investor materials, and client proposals. With only ${totalIssues} issue${totalIssues !== 1 ? 's' : ''} remaining, you\'re moments away from joining the ~3% of websites that can honestly claim it. Don\'t stop now.`,
+      cta: 'Cross the finish line',
+      ctaClass: 'icard-cta-low',
+      tags: [{ label: 'WCAG 2.1 AA', cls: 'itag-seo' }, { label: 'Trust Signal', cls: 'itag-brand' }, { label: 'Top 3%', cls: 'itag-revenue' }]
+    });
+  }
+
+  if (cards.length === 0) {
     els.improvementInsights.classList.add('hidden');
     return;
   }
 
-  const urgencyOrder = { critical: 0, high: 1, medium: 2, low: 3 };
-  insights.sort((a, b) => (urgencyOrder[a.urgency] || 9) - (urgencyOrder[b.urgency] || 9));
+  const urgencyRank = { high: 0, medium: 1, low: 2, critical: 3 };
+  cards.sort((a, b) => (urgencyRank[a.urgency] ?? 9) - (urgencyRank[b.urgency] ?? 9));
 
-  els.improvementList.innerHTML = insights.map((ins, idx) => `
-    <li class="insight-item insight-${ins.urgency}" style="animation-delay:${idx * 0.05}s">
-      <span class="tip-icon insight-icon-${ins.urgency}">${ins.icon}</span>
-      <div class="tip-content">
-        <div class="tip-title">${escapeHtml(ins.title)}</div>
-        <div class="tip-desc">${escapeHtml(ins.desc)}</div>
-        <div class="tip-tags">
-          ${ins.tags.map(t => `<span class="tip-tag ${t.class}">${t.text}</span>`).join('')}
+  els.improvementList.innerHTML = cards.map((c, idx) => `
+    <div class="insight-card insight-card-${c.urgency}" style="animation-delay:${idx * 0.06}s">
+      <div class="icard-accent"></div>
+      <div class="icard-body">
+        <div class="icard-top">
+          <span class="icard-icon">${c.icon}</span>
+          <div class="icard-stat-block">
+            <span class="icard-stat">${escapeHtml(c.stat)}</span>
+            <span class="icard-stat-label">${escapeHtml(c.statLabel)}</span>
+          </div>
+        </div>
+        <div class="icard-title">${escapeHtml(c.title)}</div>
+        <div class="icard-desc">${escapeHtml(c.desc)}</div>
+        <div class="icard-footer">
+          <div class="icard-tags">${c.tags.map(t => `<span class="itag ${t.cls}">${t.label}</span>`).join('')}</div>
+          <span class="icard-cta ${c.ctaClass}">${escapeHtml(c.cta)} →</span>
         </div>
       </div>
-    </li>
+    </div>
   `).join('');
 
   els.improvementInsights.classList.remove('hidden');
