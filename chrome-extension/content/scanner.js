@@ -105,11 +105,9 @@
         transition: outline-color 0.3s ease, box-shadow 0.3s ease !important;
       }
 
-      /* ── Floating label: shows #N · Title ── */
+      /* ── Floating label: shows #N · Title (position: absolute, won't shift layout) ── */
       .ua-a11y-label {
-        position: absolute;
-        top: -28px;
-        left: 4px;
+        position: absolute !important;
         background: linear-gradient(135deg, #1a1a2e, #16213e);
         color: #f0f0f0;
         font-size: 11px;
@@ -120,9 +118,9 @@
         max-width: 280px;
         overflow: hidden;
         text-overflow: ellipsis;
-        z-index: 999999;
+        z-index: 2147483647 !important;
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-        pointer-events: none;
+        pointer-events: none !important;
         box-shadow: 0 2px 8px rgba(0,0,0,0.4);
         border: 1px solid rgba(233,69,96,0.4);
         animation: ua-label-in 0.3s ease-out;
@@ -134,11 +132,9 @@
         margin-right: 4px;
       }
 
-      /* ── Numbered badge circle ── */
+      /* ── Numbered badge circle (position: absolute, won't shift layout) ── */
       .ua-a11y-badge {
-        position: absolute;
-        top: -10px;
-        right: -10px;
+        position: absolute !important;
         min-width: 22px;
         height: 22px;
         padding: 0 5px;
@@ -150,10 +146,10 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        z-index: 1000000;
+        z-index: 2147483647 !important;
         font-family: -apple-system, BlinkMacSystemFont, sans-serif;
         box-shadow: 0 2px 8px rgba(233,69,96,0.4);
-        pointer-events: none;
+        pointer-events: none !important;
         animation: ua-badge-pop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
         border: 2px solid #fff;
       }
@@ -298,30 +294,35 @@
             el.setAttribute('data-ua-num', String(issueIdx + 1));
             el.setAttribute('data-ua-title', issueTitle);
 
-            // Ensure the element has relative/absolute positioning for badge + label
-            const pos = window.getComputedStyle(el).position;
-            if (pos === 'static') {
-              el.style.position = 'relative';
-              el.setAttribute('data-ua-was-static', 'true');
-            }
-
-            // Add floating label: #N · Issue Title
-            const label = document.createElement('span');
+            // Get element position for fixed positioning
+            const rect = el.getBoundingClientRect();
+            
+            // Add floating label: #N · Issue Title (position: fixed, won't shift layout)
+            const label = document.createElement('div');
             label.className = 'ua-a11y-label';
             label.innerHTML = `<span class="ua-label-num">#${issueIdx + 1}</span>${issueTitle}`;
-            el.appendChild(label);
+            label.style.top = `${window.scrollY + rect.top - 32}px`;
+            label.style.left = `${window.scrollX + rect.left + 4}px`;
+            label.setAttribute('data-ua-marker', el.getAttribute('data-ua-num'));
+            document.body.appendChild(label);
 
-            // Add numbered badge circle
-            const badge = document.createElement('span');
+            // Add numbered badge circle (position: fixed)
+            const badge = document.createElement('div');
             badge.className = 'ua-a11y-badge';
             badge.textContent = `${issueIdx + 1}`;
-            el.appendChild(badge);
+            badge.style.top = `${window.scrollY + rect.top - 10}px`;
+            badge.style.left = `${window.scrollX + rect.right - 10}px`;
+            badge.setAttribute('data-ua-marker', el.getAttribute('data-ua-num'));
+            document.body.appendChild(badge);
 
             highlighted++;
           }
         } catch (e) { /* invalid selector */ }
       }
     });
+    
+    // Update marker positions on scroll/resize
+    updateMarkerPositions();
     return highlighted;
   }
 
@@ -331,20 +332,22 @@
   function clearHighlights() {
     // Remove dim overlay if present
     document.querySelectorAll('.ua-a11y-dim-overlay').forEach(o => o.remove());
+    
+    // Remove body-level markers (labels and badges)
+    document.querySelectorAll('.ua-a11y-badge, .ua-a11y-label').forEach(m => m.remove());
+    
+    // Clean up highlighted elements
     document.querySelectorAll(`.${HIGHLIGHT_CLASS}`).forEach(el => {
       el.classList.remove(HIGHLIGHT_CLASS, 'ua-a11y-spotlight', 'ua-a11y-flash', 'ua-a11y-located');
       el.removeAttribute('data-ua-issue');
       el.removeAttribute('data-ua-severity');
       el.removeAttribute('data-ua-num');
       el.removeAttribute('data-ua-title');
-      // Remove labels and badges
-      el.querySelectorAll('.ua-a11y-badge, .ua-a11y-label').forEach(b => b.remove());
-      // Restore static positioning if we changed it
-      if (el.getAttribute('data-ua-was-static') === 'true') {
-        el.style.position = '';
-        el.removeAttribute('data-ua-was-static');
-      }
     });
+    
+    // Remove scroll/resize listeners
+    window.removeEventListener('scroll', updateMarkerPositions);
+    window.removeEventListener('resize', updateMarkerPositions);
   }
 
   /**

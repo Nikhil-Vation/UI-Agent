@@ -157,6 +157,10 @@ let highlightsActive = false;
 let scanStartTime = null;
 let activeFilter = 'all';
 
+/* ═══════ Scan cache (remembers last scan per tab) ═══════ */
+const scanCache = new Map(); // key: tabId, value: { analysis, timestamp }
+const CACHE_DURATION_MS = 5 * 60 * 1000; // 5 minutes
+
 /* ═══════ Lighthouse state ═══════ */
 let lighthouseData = null;
 let lighthouseLoading = false;
@@ -236,6 +240,35 @@ document.addEventListener('DOMContentLoaded', async () => {
   detectCapabilities();
   bindEvents();
   startTypewriter();
+
+  // Check if we have cached scan results for this tab
+  if (currentTabId && scanCache.has(currentTabId)) {
+    const cached = scanCache.get(currentTabId);
+    const age = Date.now() - cached.timestamp;
+    
+    // If cache is still fresh (< 5 minutes), restore it
+    if (age < CACHE_DURATION_MS) {
+      currentAnalysis = cached.analysis;
+      renderResults(currentAnalysis);
+      
+      // Restore highlights if they were active
+      if (cached.highlightsActive) {
+        toggleHighlights();
+      }
+      
+      // Dismiss intro
+      if (els.introHero && !els.introHero.classList.contains('hidden')) {
+        stopTypewriter();
+        els.introHero.classList.add('intro-exit');
+        setTimeout(() => {
+          els.introHero.classList.add('hidden');
+        }, 400);
+      }
+    } else {
+      // Cache expired, remove it
+      scanCache.delete(currentTabId);
+    }
+  }
 
   // Listen for Lighthouse results pushed from the service worker.
   // The SW fetches in background; this fires whether or not the popup was open during fetch.
@@ -797,6 +830,13 @@ async function handleScan() {
     currentAnalysis = response.analysis;
     const duration = ((Date.now() - scanStartTime) / 1000).toFixed(1);
     currentAnalysis._scanDuration = duration;
+
+    // Cache the scan results for this tab
+    scanCache.set(currentTabId, {
+      analysis: currentAnalysis,
+      timestamp: Date.now(),
+      highlightsActive: false
+    });
 
     renderResults(response.analysis);
     saveToHistory(response.analysis);
@@ -3011,6 +3051,12 @@ async function toggleHighlights() {
     els.btnHighlight.textContent = '👁️ On';
     els.btnHighlight.classList.add('active');
     els.btnHighlight.title = 'Highlights on — click to hide';
+    
+    // Update cache with highlights state
+    if (currentTabId && scanCache.has(currentTabId)) {
+      const cached = scanCache.get(currentTabId);
+      cached.highlightsActive = true;
+    }
   }
 }
 
@@ -3020,6 +3066,12 @@ async function clearHighlights() {
   els.btnHighlight.textContent = '👁️ Highlight';
   els.btnHighlight.classList.remove('active');
   els.btnHighlight.title = 'Highlight issues on page';
+  
+  // Update cache with highlights state
+  if (currentTabId && scanCache.has(currentTabId)) {
+    const cached = scanCache.get(currentTabId);
+    cached.highlightsActive = false;
+  }
 }
 
 /* ═══════ Settings ═══════ */
