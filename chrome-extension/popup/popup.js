@@ -158,8 +158,42 @@ let scanStartTime = null;
 let activeFilter = 'all';
 
 /* ═══════ Scan cache (remembers last scan per tab) ═══════ */
-const scanCache = new Map(); // key: tabId, value: { analysis, timestamp }
 const CACHE_DURATION_MS = 5 * 60 * 1000; // 5 minutes
+const SCAN_CACHE_KEY = 'scanCache';
+
+// Helper functions for persistent scan cache
+async function getScanCache() {
+  const result = await chrome.storage.local.get(SCAN_CACHE_KEY);
+  return result[SCAN_CACHE_KEY] || {};
+}
+
+async function setScanCache(tabId, data) {
+  const cache = await getScanCache();
+  cache[tabId] = data;
+  await chrome.storage.local.set({ [SCAN_CACHE_KEY]: cache });
+}
+
+async function getCachedScan(tabId) {
+  const cache = await getScanCache();
+  return cache[tabId] || null;
+}
+
+async function clearExpiredCache() {
+  const cache = await getScanCache();
+  const now = Date.now();
+  let changed = false;
+  
+  for (const [tabId, data] of Object.entries(cache)) {
+    if (data.timestamp && (now - data.timestamp) > CACHE_DURATION_MS) {
+      delete cache[tabId];
+      changed = true;
+    }
+  }
+  
+  if (changed) {
+    await chrome.storage.local.set({ [SCAN_CACHE_KEY]: cache });
+  }
+}
 
 /* ═══════ Lighthouse state ═══════ */
 let lighthouseData = null;
@@ -241,32 +275,34 @@ document.addEventListener('DOMContentLoaded', async () => {
   bindEvents();
   startTypewriter();
 
+  // Clear any expired cache entries
+  await clearExpiredCache();
+
   // Check if we have cached scan results for this tab
-  if (currentTabId && scanCache.has(currentTabId)) {
-    const cached = scanCache.get(currentTabId);
-    const age = Date.now() - cached.timestamp;
-    
-    // If cache is still fresh (< 5 minutes), restore it
-    if (age < CACHE_DURATION_MS) {
-      currentAnalysis = cached.analysis;
-      renderResults(currentAnalysis);
+  if (currentTabId) {
+    const cached = await getCachedScan(currentTabId);
+    if (cached) {
+      const age = Date.now() - cached.timestamp;
       
-      // Restore highlights if they were active
-      if (cached.highlightsActive) {
-        toggleHighlights();
+      // If cache is still fresh (< 5 minutes), restore it
+      if (age < CACHE_DURATION_MS) {
+        currentAnalysis = cached.analysis;
+        renderResults(currentAnalysis);
+        
+        // Restore highlights if they were active
+        if (cached.highlightsActive) {
+          toggleHighlights();
+        }
+        
+        // Dismiss intro
+        if (els.introHero && !els.introHero.classList.contains('hidden')) {
+          stopTypewriter();
+          els.introHero.classList.add('intro-exit');
+          setTimeout(() => {
+            els.introHero.classList.add('hidden');
+          }, 400);
+        }
       }
-      
-      // Dismiss intro
-      if (els.introHero && !els.introHero.classList.contains('hidden')) {
-        stopTypewriter();
-        els.introHero.classList.add('intro-exit');
-        setTimeout(() => {
-          els.introHero.classList.add('hidden');
-        }, 400);
-      }
-    } else {
-      // Cache expired, remove it
-      scanCache.delete(currentTabId);
     }
   }
 
@@ -831,8 +867,8 @@ async function handleScan() {
     const duration = ((Date.now() - scanStartTime) / 1000).toFixed(1);
     currentAnalysis._scanDuration = duration;
 
-    // Cache the scan results for this tab
-    scanCache.set(currentTabId, {
+    // Cache the scan results for this tab (persistent storage)
+    await setScanCache(currentTabId, {
       analysis: currentAnalysis,
       timestamp: Date.now(),
       highlightsActive: false
@@ -3053,9 +3089,12 @@ async function toggleHighlights() {
     els.btnHighlight.title = 'Highlights on — click to hide';
     
     // Update cache with highlights state
-    if (currentTabId && scanCache.has(currentTabId)) {
-      const cached = scanCache.get(currentTabId);
-      cached.highlightsActive = true;
+    if (currentTabId) {
+      const cached = await getCachedScan(currentTabId);
+      if (cached) {
+        cached.highlightsActive = true;
+        await setScanCache(currentTabId, cached);
+      }
     }
   }
 }
@@ -3068,9 +3107,12 @@ async function clearHighlights() {
   els.btnHighlight.title = 'Highlight issues on page';
   
   // Update cache with highlights state
-  if (currentTabId && scanCache.has(currentTabId)) {
-    const cached = scanCache.get(currentTabId);
-    cached.highlightsActive = false;
+  if (currentTabId) {
+    const cached = await getCachedScan(currentTabId);
+    if (cached) {
+      cached.highlightsActive = false;
+      await setScanCache(currentTabId, cached);
+    }
   }
 }
 
