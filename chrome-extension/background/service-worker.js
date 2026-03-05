@@ -465,17 +465,52 @@ async function ensureContentScripts(tabId) {
 
 /**
  * Send message to a content script in a specific tab
+ * If content script is not ready, inject it first
  */
-function sendToTab(tabId, message) {
-  return new Promise((resolve) => {
-    chrome.tabs.sendMessage(tabId, message, (response) => {
-      if (chrome.runtime.lastError) {
-        resolve({ ok: false, error: chrome.runtime.lastError.message });
-      } else {
-        resolve(response);
-      }
+async function sendToTab(tabId, message) {
+  try {
+    // First try to ping the content script
+    const pingResponse = await new Promise((resolve) => {
+      chrome.tabs.sendMessage(tabId, { type: 'ping' }, (response) => {
+        if (chrome.runtime.lastError) {
+          resolve(null);
+        } else {
+          resolve(response);
+        }
+      });
     });
-  });
+
+    // If no response, inject content scripts
+    if (!pingResponse) {
+      console.log('[Service Worker] Content script not ready, injecting...');
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        files: ['content/scanner.js']
+      });
+      await chrome.scripting.executeScript({
+        target: { tabId },
+        files: ['content/redactor.js']
+      });
+      
+      // Wait a bit for scripts to initialize
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+
+    // Now send the actual message
+    return new Promise((resolve) => {
+      chrome.tabs.sendMessage(tabId, message, (response) => {
+        if (chrome.runtime.lastError) {
+          console.error('[Service Worker] Error sending message:', chrome.runtime.lastError);
+          resolve({ ok: false, error: chrome.runtime.lastError.message });
+        } else {
+          resolve(response);
+        }
+      });
+    });
+  } catch (err) {
+    console.error('[Service Worker] sendToTab error:', err);
+    return { ok: false, error: err.message };
+  }
 }
 
 /* ═══════════════════════════════════════════

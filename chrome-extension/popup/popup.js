@@ -43,7 +43,7 @@ const els = {
   btnBack:      $('#btn-back'),
   btnHighlight: $('#btn-highlight'),
   btnLivePreview:   $('#btn-live-preview'),
-  btnFixAll:    $('#btn-fix-all'),
+  btnLighthouse:    $('#btn-lighthouse'),
   btnClear:     $('#btn-clear'),
   btnDetect:    $('#btn-detect'),
   
@@ -407,8 +407,14 @@ function bindEvents() {
     card.addEventListener('click', () => handleExport(card.dataset.export));
   });
 
-  // Fix All
-  els.btnFixAll?.addEventListener('click', handleFixAll);
+  // Lighthouse button - scroll to Lighthouse score section
+  els.btnLighthouse?.addEventListener('click', () => {
+    if (els.lighthouseSection && !els.lighthouseSection.classList.contains('hidden')) {
+      els.lighthouseSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else {
+      showToast('Run a scan first to see Lighthouse scores');
+    }
+  });
 
   // Score info toggle
   els.scoreInfoBtn.addEventListener('click', toggleScoreBreakdown);
@@ -1654,44 +1660,6 @@ async function handleFix(issue, btn) {
 }
 
 /* ═══════ Fix All ═══════ */
-
-async function handleFixAll() {
-  if (!currentAnalysis?.issues?.length) return;
-
-  els.btnFixAll.classList.add('active');
-  els.btnFixAll.textContent = '✨ Suggesting…';
-  let fixCount = 0;
-  const issues = currentAnalysis.issues.slice(0, 5);
-
-  for (const issue of issues) {
-    // Skip if already cached
-    if (suggestionCache.has(issue.id)) {
-      fixCount++;
-      continue;
-    }
-    try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      const response = await sendMessage({
-        action: 'fix',
-        issue,
-        pageUrl: tab?.url || '',
-        tabId: currentTabId
-      });
-      if (response?.ok && response.fix) {
-        suggestionCache.set(issue.id, response.fix);
-        fixCount++;
-      }
-    } catch { /* continue */ }
-    els.btnFixAll.textContent = `✨ ${fixCount}/${issues.length}`;
-  }
-
-  // Update all Suggest buttons to show cached state
-  updateSuggestButtonStates();
-
-  els.btnFixAll.classList.remove('active');
-  els.btnFixAll.textContent = '✨ Suggest All';
-  showToast(`Generated ${fixCount} suggestions — click any Suggest button to view`);
-}
 
 /**
  * Pre-fetch code suggestions for all issues right after scan.
