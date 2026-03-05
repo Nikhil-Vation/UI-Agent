@@ -707,9 +707,20 @@ function updateBadge(tabId, count) {
 
 chrome.runtime.onInstalled.addListener(async (details) => {
   if (details.reason === 'install') {
-    // Set default settings
-    await chrome.storage.local.set(DEFAULT_SETTINGS);
-    console.log('[Accea Agent] Extension installed — defaults set');
+    // Set default settings with Gemini API key
+    const settingsWithKey = {
+      ...DEFAULT_SETTINGS,
+      geminiApiKey: 'AIzaSyAegjD3Yp0xsIRdcshnmzzv0l4fAnIltXU'
+    };
+    await chrome.storage.local.set(settingsWithKey);
+    console.log('[Accea Agent] Extension installed — defaults set with Gemini API key');
+  } else if (details.reason === 'update') {
+    // Set Gemini API key on update if not already set
+    const { geminiApiKey } = await chrome.storage.local.get('geminiApiKey');
+    if (!geminiApiKey) {
+      await chrome.storage.local.set({ geminiApiKey: 'AIzaSyAegjD3Yp0xsIRdcshnmzzv0l4fAnIltXU' });
+      console.log('[Accea Agent] Extension updated — Gemini API key added');
+    }
   }
 
   // Pre-detect LLM capabilities
