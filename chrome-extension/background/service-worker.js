@@ -633,6 +633,7 @@ const DEFAULT_SETTINGS = {
   privacyMode: true,
   cloudOptIn: false,
   localServerUrl: 'http://localhost:3000',
+  geminiApiKey: '',
   autoHighlight: true,
   showBadge: true,
   scanOnLoad: false,

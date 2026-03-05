@@ -3,9 +3,10 @@
  * 
  * Priority:
  *   1. window.ai (Chrome built-in on-device AI) — free, private, fast
- *   2. localhost orchestrator (local LLM) — powerful, private
- *   3. Cloud API — always works, redacted data only
- *   4. Deterministic — no LLM, rule-based suggestions only
+ *   2. Gemini API (Google's generative AI) — free tier, private, reliable
+ *   3. localhost orchestrator (local LLM) — powerful, private
+ *   4. Cloud API — always works, redacted data only
+ *   5. Deterministic — no LLM, rule-based suggestions only
  */
 
 export class LLMRouter {
@@ -17,7 +18,7 @@ export class LLMRouter {
    * Detect which LLM backends are available
    */
   async detectCapabilities() {
-    const caps = { windowAI: false, localhost: false, cloud: false };
+    const caps = { windowAI: false, gemini: false, localhost: false, cloud: false };
 
     // 1. Check window.ai (Chrome built-in)
     try {
@@ -30,7 +31,18 @@ export class LLMRouter {
       caps.windowAI = false;
     }
 
-    // 2. Check localhost orchestrator
+    // 2. Check Gemini API (needs API key from settings)
+    try {
+      // Get API key from chrome.storage
+      if (typeof chrome !== 'undefined' && chrome.storage) {
+        const result = await chrome.storage.local.get('geminiApiKey');
+        caps.gemini = !!(result.geminiApiKey && result.geminiApiKey.trim());
+      }
+    } catch (e) {
+      caps.gemini = false;
+    }
+
+    // 3. Check localhost orchestrator
     try {
       const r = await fetch('http://localhost:3000/health', { signal: AbortSignal.timeout(3000) });
       if (r.ok) {
@@ -43,7 +55,7 @@ export class LLMRouter {
       caps.localhost = false;
     }
 
-    // 3. Cloud is always "available" if user opted in (checked at call time)
+    // 4. Cloud is always "available" if user opted in (checked at call time)
     caps.cloud = true;
 
     this._capabilities = caps;
@@ -76,7 +88,17 @@ export class LLMRouter {
       }
     }
 
-    // 2. Try localhost orchestrator
+    // 2. Try Gemini API
+    if (this._capabilities.gemini && config.geminiApiKey) {
+      try {
+        const result = await this._fixWithGemini(issue, pageUrl, config.geminiApiKey);
+        if (result) return { ...result, source: 'gemini', private: true };
+      } catch (e) {
+        console.warn('Gemini API failed:', e.message);
+      }
+    }
+
+    // 3. Try localhost orchestrator
     if (this._capabilities.localhost) {
       try {
         const serverUrl = config.localServerUrl || 'http://localhost:3000';
@@ -87,7 +109,7 @@ export class LLMRouter {
       }
     }
 
-    // 3. Try cloud API (only if user opted in)
+    // 4. Try cloud API (only if user opted in)
     if (config.cloudOptIn && !config.privacyMode) {
       try {
         const result = await this._fixWithCloud(issue, pageUrl);
@@ -97,7 +119,9 @@ export class LLMRouter {
       }
     }
 
-    // 4. Return deterministic fallback (low-confidence generic)
+    // 5. Return deterministic fallback (low-confidence generic)
+    return deterministicResult;
+  }
     return deterministicResult;
   }
 
@@ -113,6 +137,49 @@ export class LLMRouter {
     session.destroy();
 
     return this._parseFixResponse(response);
+  }
+
+  /**
+   * Use Gemini API
+   */
+  async _fixWithGemini(issue, pageUrl, apiKey) {
+    const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
+    
+    const prompt = this._buildFixPrompt(issue, pageUrl);
+    
+    const requestBody = {
+      contents: [{
+        parts: [{
+          text: `You are an expert accessibility engineer. Analyze this accessibility issue and provide a fix in valid JSON format.\n\n${prompt}\n\nRespond with JSON only: { "fixTitle": "...", "before": "...", "after": "...", "explanation": "...", "effort": "S/M/L", "confidence": 0.0-1.0 }`
+        }]
+      }],
+      generationConfig: {
+        temperature: 0.7,
+        maxOutputTokens: 2048
+      }
+    };
+
+    const r = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody),
+      signal: AbortSignal.timeout(30000)
+    });
+
+    if (!r.ok) {
+      const errorText = await r.text();
+      throw new Error(`Gemini API returned ${r.status}: ${errorText}`);
+    }
+
+    const data = await r.json();
+    
+    // Extract text from Gemini response structure
+    const responseText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!responseText) {
+      throw new Error('Invalid Gemini API response structure');
+    }
+
+    return this._parseFixResponse(responseText);
   }
 
   /**

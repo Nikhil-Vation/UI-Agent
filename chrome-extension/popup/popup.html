@@ -380,6 +380,18 @@
 
     <div class="settings-group">
       <h3>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+        Gemini AI
+      </h3>
+      <label class="input-label">
+        <span>Gemini API Key <a href="https://aistudio.google.com/app/apikey" target="_blank" style="font-size:10px;opacity:0.7">(get free key)</a></span>
+        <input type="password" id="setting-gemini-api-key" placeholder="AIza… (optional)" autocomplete="off" spellcheck="false">
+      </label>
+      <div style="font-size:10px;color:var(--text-muted);opacity:0.7;margin-top:2px;">Enable Gemini API for AI-powered accessibility fixes. Free tier: 15 requests/min.</div>
+    </div>
+
+    <div class="settings-group">
+      <h3>
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
         Lighthouse
       </h3>
@@ -413,6 +425,7 @@
       <div id="capabilities-info" class="capabilities-info">
         <div class="cap-row cap-row-overall"><span>AI Suggestions</span><span id="cap-overall" class="cap-status">…</span></div>
         <div class="cap-row cap-row-detail"><span>Chrome Built-in AI</span><span id="cap-windowai" class="cap-status">…</span></div>
+        <div class="cap-row cap-row-detail"><span>Gemini API</span><span id="cap-gemini" class="cap-status">…</span></div>
         <div class="cap-row cap-row-detail"><span>Local Server</span><span id="cap-localhost" class="cap-status">…</span></div>
         <div class="cap-row cap-row-detail"><span>Cloud Fallback</span><span id="cap-cloud" class="cap-status">…</span></div>
       </div>

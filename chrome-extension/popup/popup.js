@@ -97,6 +97,7 @@ const els = {
   settingPrivacy:       $('#setting-privacy'),
   settingCloud:         $('#setting-cloud'),
   settingServerUrl:     $('#setting-server-url'),
+  settingGeminiApiKey:  $('#setting-gemini-api-key'),
   settingAutoHighlight: $('#setting-auto-highlight'),
   settingBadge:         $('#setting-badge'),
   settingPsApiKey:      $('#setting-ps-api-key'),
@@ -104,6 +105,7 @@ const els = {
   // Capabilities
   capOverall:   $('#cap-overall'),
   capWindowAI:  $('#cap-windowai'),
+  capGemini:    $('#cap-gemini'),
   capLocalhost: $('#cap-localhost'),
   capCloud:     $('#cap-cloud'),
   
@@ -3530,6 +3532,7 @@ async function loadSettings() {
   els.settingPrivacy.checked = response.privacyMode !== false;
   els.settingCloud.checked = response.cloudOptIn === true;
   els.settingServerUrl.value = response.localServerUrl || 'http://localhost:3000';
+  els.settingGeminiApiKey.value = response.geminiApiKey || '';
   els.settingAutoHighlight.checked = response.autoHighlight !== false;
   els.settingBadge.checked = response.showBadge !== false;
   els.settingPsApiKey.value = response.pagespeedApiKey || '';
@@ -3546,6 +3549,7 @@ async function saveCurrentSettings() {
       privacyMode: els.settingPrivacy.checked,
       cloudOptIn: els.settingCloud.checked,
       localServerUrl: els.settingServerUrl.value,
+      geminiApiKey: (els.settingGeminiApiKey.value || '').trim(),
       autoHighlight: els.settingAutoHighlight.checked,
       showBadge: els.settingBadge.checked,
       pagespeedApiKey: (els.settingPsApiKey.value || '').trim()
@@ -3558,6 +3562,7 @@ async function saveCurrentSettings() {
 async function detectCapabilities() {
   els.capOverall.textContent = '…';
   els.capWindowAI.textContent = '…';
+  els.capGemini.textContent = '…';
   els.capLocalhost.textContent = '…';
 
   const response = await sendMessage({ action: 'get-capabilities' });
@@ -3569,6 +3574,14 @@ async function detectCapabilities() {
   } else {
     els.capWindowAI.textContent = '✗ Not available';
     els.capWindowAI.className = 'cap-status no';
+  }
+
+  if (response.gemini) {
+    els.capGemini.textContent = '✓ API key set';
+    els.capGemini.className = 'cap-status ok';
+  } else {
+    els.capGemini.textContent = '✗ No API key';
+    els.capGemini.className = 'cap-status no';
   }
 
   if (response.localhost) {
@@ -3583,9 +3596,10 @@ async function detectCapabilities() {
   els.capCloud.className = els.settingCloud.checked ? 'cap-status ok' : 'cap-status no';
 
   // Overall AI status — green if any layer is available
-  const hasAI = response.windowAI || (response.localhost && response.localhostLLM) || els.settingCloud.checked;
+  const hasAI = response.windowAI || response.gemini || (response.localhost && response.localhostLLM) || els.settingCloud.checked;
   if (hasAI) {
     const source = response.windowAI ? 'Built-in AI'
+                 : response.gemini ? 'Gemini API'
                  : (response.localhost && response.localhostLLM) ? 'Local Server'
                  : 'Cloud';
     els.capOverall.textContent = `✓ Available via ${source}`;
