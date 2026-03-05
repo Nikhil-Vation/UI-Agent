@@ -42,20 +42,20 @@ const els = {
   btnSettings:  $('#btn-settings'),
   btnBack:      $('#btn-back'),
   btnHighlight: $('#btn-highlight'),
-  btnSandbox:   $('#btn-sandbox'),
+  btnLivePreview:   $('#btn-live-preview'),
   btnFixAll:    $('#btn-fix-all'),
   btnClear:     $('#btn-clear'),
   btnDetect:    $('#btn-detect'),
   
-  // Sandbox Mode
-  sandboxPanel:       $('#sandbox-panel'),
-  btnSandboxClose:    $('#btn-sandbox-close'),
+  // Live Preview Mode
+  livePreviewPanel:       $('#live-preview-panel'),
+  btnLivePreviewClose:    $('#btn-live-preview-close'),
   btnDownloadPatch:   $('#btn-download-patch'),
   btnUndoPatch:       $('#btn-undo-patch'),
-  btnResetSandbox:    $('#btn-reset-sandbox'),
-  sandboxPatchCount:  $('#sandbox-patch-count'),
-  sandboxDomCount:    $('#sandbox-dom-count'),
-  sandboxPatchList:   $('#sandbox-patch-list'),
+  btnResetLivePreview:    $('#btn-reset-live-preview'),
+  livePreviewPatchCount:  $('#live-preview-patch-count'),
+  livePreviewDomCount:    $('#live-preview-dom-count'),
+  livePreviewPatchList:   $('#live-preview-patch-list'),
   
   // Tabs
   tabBar:       $('#tab-bar'),
@@ -218,10 +218,10 @@ let prefetchInProgress = false;
 let prefetchTotal = 0;
 let prefetchDone = 0;
 
-/* ═══════ Sandbox Mode ═══════ */
-let sandboxActive = false;
-const sandboxPatches = []; // Array of applied patches with undo info
-const SANDBOX_CACHE_KEY = 'sandboxPatches';
+/* ═══════ Live Preview Mode ═══════ */
+let livePreviewActive = false;
+const livePreviewPatches = []; // Array of applied patches with undo info
+const LIVE_PREVIEW_CACHE_KEY = 'livePreviewPatches';
 
 // Patch types
 const PATCH_TYPE = {
@@ -378,7 +378,7 @@ function bindEvents() {
   els.btnSettings.addEventListener('click', showSettings);
   els.btnBack.addEventListener('click', hideSettings);
   els.btnHighlight.addEventListener('click', toggleHighlights);
-  els.btnSandbox.addEventListener('click', toggleSandbox);
+  els.btnLivePreview.addEventListener('click', toggleLivePreview);
   els.btnClear.addEventListener('click', clearHighlights);
   els.btnDetect.addEventListener('click', detectCapabilities);
   els.fixClose.addEventListener('click', closeFixModal);
@@ -386,11 +386,11 @@ function bindEvents() {
     if (e.target === els.fixModal) closeFixModal();
   });
 
-  // Sandbox controls
-  els.btnSandboxClose.addEventListener('click', closeSandbox);
+  // Live Preview controls
+  els.btnLivePreviewClose.addEventListener('click', closeLivePreview);
   els.btnDownloadPatch.addEventListener('click', downloadPatch);
   els.btnUndoPatch.addEventListener('click', undoLastPatch);
-  els.btnResetSandbox.addEventListener('click', resetSandbox);
+  els.btnResetLivePreview.addEventListener('click', resetLivePreview);
 
   // Tab switching
   $$('.tab-btn').forEach(btn => {
@@ -849,43 +849,43 @@ function filterIssues(severity) {
   });
 }
 
-/* ═══════ Sandbox Mode ═══════ */
+/* ═══════ Live Preview Mode ═══════ */
 
-async function toggleSandbox() {
+async function toggleLivePreview() {
   if (!currentAnalysis?.issues) {
-    showToast('Run a scan first to enable Sandbox Mode');
+    showToast('Run a scan first to enable Live Preview Mode');
     return;
   }
 
-  if (sandboxActive) {
-    closeSandbox();
+  if (livePreviewActive) {
+    closeLivePreview();
   } else {
-    openSandbox();
+    openLivePreview();
   }
 }
 
-async function openSandbox() {
-  sandboxActive = true;
-  els.sandboxPanel.classList.remove('hidden');
-  els.btnSandbox.classList.add('active');
-  els.btnSandbox.innerHTML = '🧪 Sandbox <span style="font-size:9px;opacity:0.8">ON</span>';
+async function openLivePreview() {
+  livePreviewActive = true;
+  els.livePreviewPanel.classList.remove('hidden');
+  els.btnLivePreview.classList.add('active');
+  els.btnLivePreview.innerHTML = '🧪 Live Preview <span style="font-size:9px;opacity:0.8">ON</span>';
   
   // Load any existing patches from storage
-  await loadSandboxPatches();
-  updateSandboxUI();
+  await loadLivePreviewPatches();
+  updateLivePreviewUI();
   
-  showToast('Sandbox Mode enabled — apply fixes live!');
+  showToast('Live Preview Mode enabled — apply fixes live!');
 }
 
-function closeSandbox() {
-  sandboxActive = false;
-  els.sandboxPanel.classList.add('hidden');
-  els.btnSandbox.classList.remove('active');
-  els.btnSandbox.textContent = '🧪 Sandbox';
+function closeLivePreview() {
+  livePreviewActive = false;
+  els.livePreviewPanel.classList.add('hidden');
+  els.btnLivePreview.classList.remove('active');
+  els.btnLivePreview.textContent = '🧪 Live Preview';
 }
 
 async function applyPatch(issue, fix) {
-  if (!sandboxActive) return;
+  if (!livePreviewActive) return;
 
   try {
     // Parse the fix suggestion to extract DOM changes
@@ -900,7 +900,7 @@ async function applyPatch(issue, fix) {
       });
       
       if (response?.ok) {
-        sandboxPatches.push({
+        livePreviewPatches.push({
           id: `patch-${Date.now()}-${Math.random()}`,
           issueId: issue.id,
           issueTitle: issue.title,
@@ -911,8 +911,8 @@ async function applyPatch(issue, fix) {
     }
     
     // Save patches to storage
-    await saveSandboxPatches();
-    updateSandboxUI();
+    await saveLivePreviewPatches();
+    updateLivePreviewUI();
     renderPatchList();
     
     showToast(`✓ Patch applied for: ${issue.title}`);
@@ -995,9 +995,9 @@ function extractSelector(rawSelector) {
 }
 
 async function undoLastPatch() {
-  if (sandboxPatches.length === 0) return;
+  if (livePreviewPatches.length === 0) return;
   
-  const patch = sandboxPatches.pop();
+  const patch = livePreviewPatches.pop();
   
   try {
     const response = await sendMessage({
@@ -1007,22 +1007,22 @@ async function undoLastPatch() {
     });
     
     if (response?.ok) {
-      await saveSandboxPatches();
-      updateSandboxUI();
+      await saveLivePreviewPatches();
+      updateLivePreviewUI();
       renderPatchList();
       showToast('✓ Patch undone');
     }
   } catch (err) {
     // Re-add if undo failed
-    sandboxPatches.push(patch);
+    livePreviewPatches.push(patch);
     showToast(`Failed to undo: ${err.message}`);
   }
 }
 
-async function resetSandbox() {
-  if (sandboxPatches.length === 0) return;
+async function resetLivePreview() {
+  if (livePreviewPatches.length === 0) return;
   
-  if (!confirm(`Reset all ${sandboxPatches.length} patches? This will revert all changes.`)) {
+  if (!confirm(`Reset all ${livePreviewPatches.length} patches? This will revert all changes.`)) {
     return;
   }
   
@@ -1033,9 +1033,9 @@ async function resetSandbox() {
     });
     
     if (response?.ok) {
-      sandboxPatches.length = 0;
+      livePreviewPatches.length = 0;
       await chrome.storage.local.remove(SANDBOX_CACHE_KEY);
-      updateSandboxUI();
+      updateLivePreviewUI();
       renderPatchList();
       showToast('✓ All patches cleared');
     }
@@ -1045,7 +1045,7 @@ async function resetSandbox() {
 }
 
 async function downloadPatch() {
-  if (sandboxPatches.length === 0) {
+  if (livePreviewPatches.length === 0) {
     showToast('No patches to download');
     return;
   }
@@ -1054,7 +1054,7 @@ async function downloadPatch() {
   const cssPatches = [];
   const jsPatches = [];
   
-  for (const patch of sandboxPatches) {
+  for (const patch of livePreviewPatches) {
     const { change } = patch;
     
     if (change.type === PATCH_TYPE.ATTRIBUTE) {
@@ -1124,25 +1124,25 @@ function downloadFile(filename, content, mimeType) {
   URL.revokeObjectURL(url);
 }
 
-function updateSandboxUI() {
-  const patchCount = sandboxPatches.length;
-  const domCount = sandboxPatches.reduce((sum, p) => sum + (p.change ? 1 : 0), 0);
+function updateLivePreviewUI() {
+  const patchCount = livePreviewPatches.length;
+  const domCount = livePreviewPatches.reduce((sum, p) => sum + (p.change ? 1 : 0), 0);
   
-  els.sandboxPatchCount.textContent = patchCount;
-  els.sandboxDomCount.textContent = domCount;
+  els.livePreviewPatchCount.textContent = patchCount;
+  els.livePreviewDomCount.textContent = domCount;
   
   els.btnDownloadPatch.disabled = patchCount === 0;
   els.btnUndoPatch.disabled = patchCount === 0;
-  els.btnResetSandbox.disabled = patchCount === 0;
+  els.btnResetLivePreview.disabled = patchCount === 0;
 }
 
 function renderPatchList() {
-  if (sandboxPatches.length === 0) {
-    els.sandboxPatchList.innerHTML = '<div class="sandbox-empty">No patches applied yet. Click "Apply Fix" on any issue to test it live.</div>';
+  if (livePreviewPatches.length === 0) {
+    els.livePreviewPatchList.innerHTML = '<div class="live-preview-empty">No patches applied yet. Click "Apply Fix" on any issue to test it live.</div>';
     return;
   }
   
-  els.sandboxPatchList.innerHTML = sandboxPatches.map((patch, idx) => `
+  els.livePreviewPatchList.innerHTML = livePreviewPatches.map((patch, idx) => `
     <div class="sandbox-patch-item">
       <div class="sandbox-patch-num">${idx + 1}</div>
       <div class="sandbox-patch-info">
@@ -1157,31 +1157,48 @@ function renderPatchList() {
   $$('.sandbox-patch-remove').forEach(btn => {
     btn.addEventListener('click', async () => {
       const idx = parseInt(btn.dataset.idx);
-      sandboxPatches.splice(idx, 1);
-      await saveSandboxPatches();
-      updateSandboxUI();
+      livePreviewPatches.splice(idx, 1);
+      await saveLivePreviewPatches();
+      updateLivePreviewUI();
       renderPatchList();
     });
   });
 }
 
-async function saveSandboxPatches() {
+async function saveLivePreviewPatches() {
+  // Store patches per-tab with URL for reload persistence
+  const tab = await chrome.tabs.get(currentTabId);
+  const key = `${LIVE_PREVIEW_CACHE_KEY}_${currentTabId}`;
+  
   await chrome.storage.local.set({
-    [SANDBOX_CACHE_KEY]: {
+    [key]: {
       tabId: currentTabId,
-      patches: sandboxPatches,
+      url: tab.url,
+      patches: livePreviewPatches,
       timestamp: Date.now()
     }
   });
 }
 
-async function loadSandboxPatches() {
-  const result = await chrome.storage.local.get(SANDBOX_CACHE_KEY);
-  const cached = result[SANDBOX_CACHE_KEY];
+async function loadLivePreviewPatches() {
+  const key = `${LIVE_PREVIEW_CACHE_KEY}_${currentTabId}`;
+  const result = await chrome.storage.local.get(key);
+  const cached = result[key];
   
   if (cached && cached.tabId === currentTabId) {
-    sandboxPatches.length = 0;
-    sandboxPatches.push(...cached.patches);
+    livePreviewPatches.length = 0;
+    livePreviewPatches.push(...cached.patches);
+    
+    // Re-apply patches to DOM after reload
+    for (const patch of cached.patches) {
+      if (patch.change) {
+        await sendMessage({
+          action: 'apply-patch',
+          tabId: currentTabId,
+          change: patch.change
+        });
+      }
+    }
   }
 }
 
@@ -1758,10 +1775,10 @@ function showFixModal(fix, issue) {
   const confidence = fix.confidence ? `${Math.round(fix.confidence * 100)}%` : '—';
   
   // Add "Apply Fix" button if sandbox mode is active
-  const sandboxBtn = sandboxActive ? `
+  const sandboxBtn = livePreviewActive ? `
     <button class="fix-apply-btn" id="fix-apply">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-      Apply to Page (Sandbox)
+      Apply to Page (Live Preview)
     </button>
   ` : '';
   
@@ -1799,8 +1816,8 @@ function showFixModal(fix, issue) {
     }
   });
   
-  // Sandbox apply button
-  if (sandboxActive) {
+  // Live Preview apply button
+  if (livePreviewActive) {
     const applyBtn = $('#fix-apply');
     applyBtn?.addEventListener('click', async () => {
       applyBtn.disabled = true;
