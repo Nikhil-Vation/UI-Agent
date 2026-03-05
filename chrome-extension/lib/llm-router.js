@@ -122,8 +122,6 @@ export class LLMRouter {
     // 5. Return deterministic fallback (low-confidence generic)
     return deterministicResult;
   }
-    return deterministicResult;
-  }
 
   /**
    * Use Chrome's built-in AI (on-device)
