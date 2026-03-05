@@ -473,13 +473,13 @@ async function sendToTab(tabId, message) {
   // Try sending the message directly first
   const response = await _sendMessageToTab(tabId, message);
   
-  // If it worked, return the response
-  if (response && response.ok !== undefined) {
+  // If the content script responded successfully, return its response
+  if (response && response.ok === true) {
     return response;
   }
   
-  // If it failed (content script not loaded), inject and retry
-  console.log('[Service Worker] Content script not responding, injecting into tab', tabId);
+  // Content script not loaded or returned an error — inject and retry
+  console.log('[Service Worker] Content script not responding, injecting into tab', tabId, '| initial response:', JSON.stringify(response));
   try {
     await chrome.scripting.executeScript({
       target: { tabId },

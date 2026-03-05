@@ -409,14 +409,19 @@ function bindEvents() {
 
   // Lighthouse button - switch to Insights tab and scroll to Lighthouse section
   els.btnLighthouse?.addEventListener('click', () => {
+    if (!currentAnalysis?.issues) {
+      showToast('Run a scan first to see Lighthouse scores');
+      return;
+    }
     switchTab('tips');
-    setTimeout(() => {
-      if (els.lighthouseSection && !els.lighthouseSection.classList.contains('hidden')) {
+    // renderTips() is called synchronously by switchTab('tips'),
+    // which calls renderLighthouseSection() making the section visible.
+    // Use requestAnimationFrame to scroll after the DOM update.
+    requestAnimationFrame(() => {
+      if (els.lighthouseSection) {
         els.lighthouseSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      } else {
-        showToast('Run a scan first to see Lighthouse scores');
       }
-    }, 100);
+    });
   });
 
   // Score info toggle
@@ -1294,11 +1299,15 @@ async function handleScan() {
     const duration = ((Date.now() - scanStartTime) / 1000).toFixed(1);
     currentAnalysis._scanDuration = duration;
 
+    // The service worker auto-highlights issues during scan (step 7),
+    // so mark highlights as active in the popup
+    highlightsActive = true;
+
     // Cache the scan results for this tab (persistent storage)
     await setScanCache(currentTabId, {
       analysis: currentAnalysis,
       timestamp: Date.now(),
-      highlightsActive: false
+      highlightsActive: true
     });
 
     renderResults(response.analysis);
@@ -1401,6 +1410,13 @@ function renderResults(analysis) {
   // Show tabs, then switch to issues (which also shows quick actions + filter bar)
   els.tabBar.classList.remove('hidden');
   switchTab('issues');
+
+  // Update highlight button to reflect auto-highlight state from scan
+  if (highlightsActive) {
+    els.btnHighlight.textContent = '👁️ On';
+    els.btnHighlight.classList.add('active');
+    els.btnHighlight.title = 'Highlights on — click to hide';
+  }
 
   // Issues list
   const issues = analysis.issues || [];
@@ -3651,7 +3667,19 @@ function showToast(message, duration = 2500) {
 
 function sendMessage(msg) {
   return new Promise((resolve) => {
-    chrome.runtime.sendMessage(msg, resolve);
+    try {
+      chrome.runtime.sendMessage(msg, (response) => {
+        if (chrome.runtime.lastError) {
+          console.warn('[Popup] sendMessage error:', chrome.runtime.lastError.message, 'for action:', msg.action);
+          resolve({ ok: false, error: chrome.runtime.lastError.message });
+        } else {
+          resolve(response);
+        }
+      });
+    } catch (err) {
+      console.error('[Popup] sendMessage threw:', err);
+      resolve({ ok: false, error: err.message });
+    }
   });
 }
 
