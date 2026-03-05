@@ -407,13 +407,16 @@ function bindEvents() {
     card.addEventListener('click', () => handleExport(card.dataset.export));
   });
 
-  // Lighthouse button - scroll to Lighthouse score section
+  // Lighthouse button - switch to Insights tab and scroll to Lighthouse section
   els.btnLighthouse?.addEventListener('click', () => {
-    if (els.lighthouseSection && !els.lighthouseSection.classList.contains('hidden')) {
-      els.lighthouseSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    } else {
-      showToast('Run a scan first to see Lighthouse scores');
-    }
+    switchTab('tips');
+    setTimeout(() => {
+      if (els.lighthouseSection && !els.lighthouseSection.classList.contains('hidden')) {
+        els.lighthouseSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } else {
+        showToast('Run a scan first to see Lighthouse scores');
+      }
+    }, 100);
   });
 
   // Score info toggle

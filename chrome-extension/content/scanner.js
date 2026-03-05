@@ -13,6 +13,10 @@
 (() => {
   'use strict';
 
+  // Guard against duplicate injection
+  if (window.__sitescope360_scanner_loaded) return;
+  window.__sitescope360_scanner_loaded = true;
+
   /* ───────── DOM Info Collection ───────── */
 
   /**

@@ -447,7 +447,7 @@ function normalizeAxeResults(raw) {
  */
 async function ensureContentScripts(tabId) {
   try {
-    const response = await sendToTab(tabId, { type: 'ping' });
+    const response = await _sendMessageToTab(tabId, { type: 'ping' });
     if (response?.ok) return; // already injected
   } catch {
     // Not injected yet
@@ -461,56 +461,54 @@ async function ensureContentScripts(tabId) {
     target: { tabId },
     files: ['content/redactor.js']
   });
+  // Wait for scripts to initialize
+  await new Promise(resolve => setTimeout(resolve, 150));
 }
 
 /**
- * Send message to a content script in a specific tab
- * If content script is not ready, inject it first
+ * Send message to a content script in a specific tab.
+ * If the content script is not responding, inject it first then retry.
  */
 async function sendToTab(tabId, message) {
-  try {
-    // First try to ping the content script
-    const pingResponse = await new Promise((resolve) => {
-      chrome.tabs.sendMessage(tabId, { type: 'ping' }, (response) => {
-        if (chrome.runtime.lastError) {
-          resolve(null);
-        } else {
-          resolve(response);
-        }
-      });
-    });
-
-    // If no response, inject content scripts
-    if (!pingResponse) {
-      console.log('[Service Worker] Content script not ready, injecting...');
-      await chrome.scripting.executeScript({
-        target: { tabId },
-        files: ['content/scanner.js']
-      });
-      await chrome.scripting.executeScript({
-        target: { tabId },
-        files: ['content/redactor.js']
-      });
-      
-      // Wait a bit for scripts to initialize
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-
-    // Now send the actual message
-    return new Promise((resolve) => {
-      chrome.tabs.sendMessage(tabId, message, (response) => {
-        if (chrome.runtime.lastError) {
-          console.error('[Service Worker] Error sending message:', chrome.runtime.lastError);
-          resolve({ ok: false, error: chrome.runtime.lastError.message });
-        } else {
-          resolve(response);
-        }
-      });
-    });
-  } catch (err) {
-    console.error('[Service Worker] sendToTab error:', err);
-    return { ok: false, error: err.message };
+  // Try sending the message directly first
+  const response = await _sendMessageToTab(tabId, message);
+  
+  // If it worked, return the response
+  if (response && response.ok !== undefined) {
+    return response;
   }
+  
+  // If it failed (content script not loaded), inject and retry
+  console.log('[Service Worker] Content script not responding, injecting into tab', tabId);
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ['content/scanner.js']
+    });
+    // Small delay for script to initialize
+    await new Promise(resolve => setTimeout(resolve, 150));
+  } catch (injectErr) {
+    console.error('[Service Worker] Failed to inject content script:', injectErr.message);
+    return { ok: false, error: 'Cannot inject content script: ' + injectErr.message };
+  }
+  
+  // Retry the original message
+  return _sendMessageToTab(tabId, message);
+}
+
+/**
+ * Low-level message sender — wraps chrome.tabs.sendMessage
+ */
+function _sendMessageToTab(tabId, message) {
+  return new Promise((resolve) => {
+    chrome.tabs.sendMessage(tabId, message, (response) => {
+      if (chrome.runtime.lastError) {
+        resolve({ ok: false, error: chrome.runtime.lastError.message });
+      } else {
+        resolve(response || { ok: false, error: 'No response from content script' });
+      }
+    });
+  });
 }
 
 /* ═══════════════════════════════════════════
