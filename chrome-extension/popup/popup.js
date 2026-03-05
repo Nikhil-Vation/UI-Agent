@@ -448,10 +448,17 @@ function switchTab(tabName) {
   $$('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tabName));
   $$('.tab-content').forEach(c => c.classList.toggle('active', c.id === `tab-${tabName}`));
 
-  // Quick actions + filter pills are only relevant on the Issues tab
+  // Quick actions + filter pills + live preview panel are only relevant on the Issues tab
   const isIssues = tabName === 'issues';
   els.quickActions.classList.toggle('hidden', !isIssues);
   els.filterBar.classList.toggle('hidden', !isIssues);
+  
+  // Hide live preview panel when switching away from issues tab
+  if (!isIssues && livePreviewActive) {
+    els.livePreviewPanel.classList.add('hidden');
+  } else if (isIssues && livePreviewActive) {
+    els.livePreviewPanel.classList.remove('hidden');
+  }
 
   if (tabName === 'export') loadHistory();
   if (tabName === 'tips') renderTips();
@@ -885,24 +892,35 @@ function closeLivePreview() {
 }
 
 async function applyPatch(issue, fix) {
-  if (!livePreviewActive) return;
+  if (!livePreviewActive) {
+    console.warn('Live Preview not active');
+    return;
+  }
 
   try {
+    console.log('Applying patch for issue:', issue.id);
+    
     // Convert the fix's before/after code into DOM changes
     const changes = extractDOMChanges(fix, issue);
     
     if (changes.length === 0) {
+      console.warn('No DOM changes extracted from fix');
       showToast('⚠️ Could not extract DOM changes from this fix');
       return;
     }
     
+    console.log('Extracted', changes.length, 'changes:', changes);
+    
     // Apply each change to the page
     for (const change of changes) {
+      console.log('Sending apply-patch message:', change);
       const response = await sendMessage({
         action: 'apply-patch',
         tabId: currentTabId,
         change
       });
+      
+      console.log('Apply patch response:', response);
       
       if (response?.ok) {
         livePreviewPatches.push({
@@ -912,6 +930,8 @@ async function applyPatch(issue, fix) {
           change,
           timestamp: Date.now()
         });
+      } else {
+        console.error('Failed to apply patch:', response);
       }
     }
     
@@ -922,6 +942,7 @@ async function applyPatch(issue, fix) {
     
     showToast(`✓ Patch applied for: ${issue.title}`);
   } catch (err) {
+    console.error('Error in applyPatch:', err);
     showToast(`Failed to apply patch: ${err.message}`);
   }
 }
@@ -3497,28 +3518,38 @@ function launchConfetti() {
 /* ═══════ Highlights ═══════ */
 
 async function toggleHighlights() {
-  if (!currentAnalysis?.issues) return;
+  if (!currentAnalysis?.issues) {
+    console.warn('No issues to highlight');
+    return;
+  }
   
   if (highlightsActive) {
     await clearHighlights();
   } else {
-    await sendMessage({
+    console.log('Sending highlight message for', currentAnalysis.issues.length, 'issues');
+    const response = await sendMessage({
       action: 'highlight',
       tabId: currentTabId,
       issues: currentAnalysis.issues
     });
-    highlightsActive = true;
-    els.btnHighlight.textContent = '👁️ On';
-    els.btnHighlight.classList.add('active');
-    els.btnHighlight.title = 'Highlights on — click to hide';
     
-    // Update cache with highlights state
-    if (currentTabId) {
-      const cached = await getCachedScan(currentTabId);
-      if (cached) {
-        cached.highlightsActive = true;
-        await setScanCache(currentTabId, cached);
+    if (response?.ok) {
+      highlightsActive = true;
+      els.btnHighlight.textContent = '👁️ On';
+      els.btnHighlight.classList.add('active');
+      els.btnHighlight.title = 'Highlights on — click to hide';
+      
+      // Update cache with highlights state
+      if (currentTabId) {
+        const cached = await getCachedScan(currentTabId);
+        if (cached) {
+          cached.highlightsActive = true;
+          await setScanCache(currentTabId, cached);
+        }
       }
+    } else {
+      console.error('Failed to highlight issues:', response);
+      showToast('❌ Failed to highlight issues');
     }
   }
 }
