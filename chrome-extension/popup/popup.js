@@ -888,8 +888,13 @@ async function applyPatch(issue, fix) {
   if (!livePreviewActive) return;
 
   try {
-    // Parse the fix suggestion to extract DOM changes
-    const changes = extractDOMChanges(fix);
+    // Convert the fix's before/after code into DOM changes
+    const changes = extractDOMChanges(fix, issue);
+    
+    if (changes.length === 0) {
+      showToast('⚠️ Could not extract DOM changes from this fix');
+      return;
+    }
     
     // Apply each change to the page
     for (const change of changes) {
@@ -921,77 +926,82 @@ async function applyPatch(issue, fix) {
   }
 }
 
-function extractDOMChanges(fix) {
+function extractDOMChanges(fix, issue) {
   const changes = [];
   
-  // Parse AI suggestion to find actionable DOM changes
-  // Look for common patterns like:
-  // - Add attribute: aria-label="..."
-  // - Add CSS: style="..."
-  // - Modify text content
-  // - Add/remove elements
+  // Use the issue's selector to target the element
+  const selector = issue.selectors?.[0] || issue.target?.[0]?.selector;
   
-  const lines = fix.split('\n');
-  let currentSelector = null;
+  if (!selector) {
+    console.warn('No selector found for issue:', issue);
+    return changes;
+  }
   
-  for (const line of lines) {
-    // Extract selector hints (e.g., "For <button>..." or "Target: .my-class")
-    const selectorMatch = line.match(/(?:For|Target:|Element:)\s*([<\[.][\w\-#.>\[\]="' ]+)/i);
-    if (selectorMatch) {
-      currentSelector = extractSelector(selectorMatch[1]);
-    }
+  // Parse the 'after' code to extract attribute changes
+  const afterCode = fix.after || '';
+  const beforeCode = fix.before || '';
+  
+  // Extract all attributes from the after code
+  const attrRegex = /(\w+(?:-\w+)*)=["']([^"']+)["']/g;
+  let match;
+  
+  while ((match = attrRegex.exec(afterCode)) !== null) {
+    const [, attrName, attrValue] = match;
     
-    // Extract attribute additions
-    const attrMatch = line.match(/(?:Add|Set)\s+(\w+(?:-\w+)*)=\"([^\"]+)\"/i);
-    if (attrMatch && currentSelector) {
+    // Check if this attribute exists in before code with different value
+    const beforeHasAttr = new RegExp(`${attrName}=["'][^"']*["']`).test(beforeCode);
+    const beforeValue = beforeCode.match(new RegExp(`${attrName}=["']([^"']+)["']`))?.[1];
+    
+    // Only add if it's new or changed
+    if (!beforeHasAttr || beforeValue !== attrValue) {
       changes.push({
         type: PATCH_TYPE.ATTRIBUTE,
-        selector: currentSelector,
-        attribute: attrMatch[1],
-        value: attrMatch[2]
+        selector: selector,
+        attribute: attrName,
+        value: attrValue
       });
     }
+  }
+  
+  // If no attributes found, try parsing the explanation text as fallback
+  if (changes.length === 0) {
+    const explanation = fix.explanation || '';
     
-    // Extract aria-* attributes specifically
-    const ariaMatch = line.match(/(aria-[\w-]+)=\"([^\"]+)\"/);
-    if (ariaMatch && currentSelector) {
+    // Look for aria-* attributes in explanation
+    const ariaMatch = explanation.match(/(aria-[\w-]+)=["']([^"']+)["']/);
+    if (ariaMatch) {
       changes.push({
         type: PATCH_TYPE.ATTRIBUTE,
-        selector: currentSelector,
+        selector: selector,
         attribute: ariaMatch[1],
         value: ariaMatch[2]
       });
     }
     
-    // Extract role additions
-    const roleMatch = line.match(/role=\"([^\"]+)\"/);
-    if (roleMatch && currentSelector) {
+    // Look for role attribute
+    const roleMatch = explanation.match(/role=["']([^"']+)["']/);
+    if (roleMatch) {
       changes.push({
         type: PATCH_TYPE.ATTRIBUTE,
-        selector: currentSelector,
+        selector: selector,
         attribute: 'role',
         value: roleMatch[1]
+      });
+    }
+    
+    // Look for alt attribute
+    const altMatch = explanation.match(/alt=["']([^"']+)["']/);
+    if (altMatch) {
+      changes.push({
+        type: PATCH_TYPE.ATTRIBUTE,
+        selector: selector,
+        attribute: 'alt',
+        value: altMatch[1]
       });
     }
   }
   
   return changes;
-}
-
-function extractSelector(rawSelector) {
-  // Convert human-readable selector hints to CSS selectors
-  const cleaned = rawSelector.trim();
-  
-  if (cleaned.startsWith('<') && cleaned.includes('>')) {
-    // e.g., "<button>" -> "button"
-    return cleaned.replace(/<|>/g, '').split(/\s+/)[0];
-  }
-  
-  if (cleaned.startsWith('.') || cleaned.startsWith('#') || cleaned.startsWith('[')) {
-    return cleaned;
-  }
-  
-  return cleaned;
 }
 
 async function undoLastPatch() {
@@ -1823,7 +1833,7 @@ function showFixModal(fix, issue) {
       applyBtn.disabled = true;
       applyBtn.innerHTML = '<span class="spinner-sm"></span> Applying...';
       
-      await applyPatch(issue, fix.after || fix.explanation);
+      await applyPatch(issue, fix);
       
       applyBtn.innerHTML = SVG.checkCircle + ' Applied!';
       setTimeout(() => {
