@@ -419,6 +419,102 @@
     }
   }
 
+  /* ───────── Sandbox Mode: Apply Patches ───────── */
+
+  // Track applied patches for undo
+  const appliedPatches = new Map(); // patchId -> { element, originalValue, change }
+
+  function applyPatch(change, patchId) {
+    try {
+      const elements = document.querySelectorAll(change.selector);
+      if (elements.length === 0) return { ok: false, error: 'No elements match selector' };
+
+      let applied = 0;
+      elements.forEach(el => {
+        if (change.type === 'attribute') {
+          // Store original value for undo
+          const original = el.getAttribute(change.attribute);
+          appliedPatches.set(`${patchId}-${applied}`, {
+            element: el,
+            change,
+            original
+          });
+
+          // Apply the change
+          el.setAttribute(change.attribute, change.value);
+          
+          // Visual feedback: brief green glow
+          el.style.transition = 'box-shadow 0.3s ease';
+          el.style.boxShadow = '0 0 0 3px rgba(46, 213, 115, 0.5)';
+          setTimeout(() => {
+            el.style.boxShadow = '';
+          }, 800);
+
+          applied++;
+        } else if (change.type === 'css') {
+          const original = el.style[change.property];
+          appliedPatches.set(`${patchId}-${applied}`, {
+            element: el,
+            change,
+            original
+          });
+
+          el.style[change.property] = change.value;
+          applied++;
+        }
+      });
+
+      return { ok: true, applied, total: elements.length };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  }
+
+  function undoPatch(patchId) {
+    let undone = 0;
+    
+    // Find all sub-patches for this patchId
+    for (const [key, patch] of appliedPatches.entries()) {
+      if (key.startsWith(patchId)) {
+        const { element, change, original } = patch;
+        
+        if (change.type === 'attribute') {
+          if (original === null) {
+            element.removeAttribute(change.attribute);
+          } else {
+            element.setAttribute(change.attribute, original);
+          }
+        } else if (change.type === 'css') {
+          element.style[change.property] = original || '';
+        }
+        
+        appliedPatches.delete(key);
+        undone++;
+      }
+    }
+    
+    return { ok: true, undone };
+  }
+
+  function resetAllPatches() {
+    for (const [, patch] of appliedPatches.entries()) {
+      const { element, change, original } = patch;
+      
+      if (change.type === 'attribute') {
+        if (original === null) {
+          element.removeAttribute(change.attribute);
+        } else {
+          element.setAttribute(change.attribute, original);
+        }
+      } else if (change.type === 'css') {
+        element.style[change.property] = original || '';
+      }
+    }
+    
+    appliedPatches.clear();
+    return { ok: true };
+  }
+
   /* ───────── Message handler ───────── */
 
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -449,6 +545,24 @@
     if (msg.type === 'get-dom-context') {
       const context = collectDOMContext(msg.selector);
       sendResponse({ ok: true, context });
+      return false;
+    }
+
+    if (msg.type === 'apply-patch') {
+      const result = applyPatch(msg.change, msg.patchId);
+      sendResponse(result);
+      return false;
+    }
+
+    if (msg.type === 'undo-patch') {
+      const result = undoPatch(msg.patchId);
+      sendResponse(result);
+      return false;
+    }
+
+    if (msg.type === 'reset-patches') {
+      const result = resetAllPatches();
+      sendResponse(result);
       return false;
     }
 

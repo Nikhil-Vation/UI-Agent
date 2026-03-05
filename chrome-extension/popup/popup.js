@@ -42,9 +42,20 @@ const els = {
   btnSettings:  $('#btn-settings'),
   btnBack:      $('#btn-back'),
   btnHighlight: $('#btn-highlight'),
+  btnSandbox:   $('#btn-sandbox'),
   btnFixAll:    $('#btn-fix-all'),
   btnClear:     $('#btn-clear'),
   btnDetect:    $('#btn-detect'),
+  
+  // Sandbox Mode
+  sandboxPanel:       $('#sandbox-panel'),
+  btnSandboxClose:    $('#btn-sandbox-close'),
+  btnDownloadPatch:   $('#btn-download-patch'),
+  btnUndoPatch:       $('#btn-undo-patch'),
+  btnResetSandbox:    $('#btn-reset-sandbox'),
+  sandboxPatchCount:  $('#sandbox-patch-count'),
+  sandboxDomCount:    $('#sandbox-dom-count'),
+  sandboxPatchList:   $('#sandbox-patch-list'),
   
   // Tabs
   tabBar:       $('#tab-bar'),
@@ -205,6 +216,20 @@ let prefetchInProgress = false;
 let prefetchTotal = 0;
 let prefetchDone = 0;
 
+/* ═══════ Sandbox Mode ═══════ */
+let sandboxActive = false;
+const sandboxPatches = []; // Array of applied patches with undo info
+const SANDBOX_CACHE_KEY = 'sandboxPatches';
+
+// Patch types
+const PATCH_TYPE = {
+  ATTRIBUTE: 'attribute',
+  CSS: 'css',
+  TEXT: 'text',
+  REMOVE: 'remove',
+  INSERT: 'insert'
+};
+
 /* ═══════ Typewriter engine ═══════ */
 
 const TYPEWRITER_PHRASES = [
@@ -351,12 +376,19 @@ function bindEvents() {
   els.btnSettings.addEventListener('click', showSettings);
   els.btnBack.addEventListener('click', hideSettings);
   els.btnHighlight.addEventListener('click', toggleHighlights);
+  els.btnSandbox.addEventListener('click', toggleSandbox);
   els.btnClear.addEventListener('click', clearHighlights);
   els.btnDetect.addEventListener('click', detectCapabilities);
   els.fixClose.addEventListener('click', closeFixModal);
   els.fixModal.addEventListener('click', (e) => {
     if (e.target === els.fixModal) closeFixModal();
   });
+
+  // Sandbox controls
+  els.btnSandboxClose.addEventListener('click', closeSandbox);
+  els.btnDownloadPatch.addEventListener('click', downloadPatch);
+  els.btnUndoPatch.addEventListener('click', undoLastPatch);
+  els.btnResetSandbox.addEventListener('click', resetSandbox);
 
   // Tab switching
   $$('.tab-btn').forEach(btn => {
@@ -813,6 +845,342 @@ function filterIssues(severity) {
       card.style.display = dot?.classList.contains(severity) ? '' : 'none';
     }
   });
+}
+
+/* ═══════ Sandbox Mode ═══════ */
+
+async function toggleSandbox() {
+  if (!currentAnalysis?.issues) {
+    showToast('Run a scan first to enable Sandbox Mode');
+    return;
+  }
+
+  if (sandboxActive) {
+    closeSandbox();
+  } else {
+    openSandbox();
+  }
+}
+
+async function openSandbox() {
+  sandboxActive = true;
+  els.sandboxPanel.classList.remove('hidden');
+  els.btnSandbox.classList.add('active');
+  els.btnSandbox.innerHTML = '🧪 Sandbox <span style="font-size:9px;opacity:0.8">ON</span>';
+  
+  // Load any existing patches from storage
+  await loadSandboxPatches();
+  updateSandboxUI();
+  
+  showToast('Sandbox Mode enabled — apply fixes live!');
+}
+
+function closeSandbox() {
+  sandboxActive = false;
+  els.sandboxPanel.classList.add('hidden');
+  els.btnSandbox.classList.remove('active');
+  els.btnSandbox.textContent = '🧪 Sandbox';
+}
+
+async function applyPatch(issue, fix) {
+  if (!sandboxActive) return;
+
+  try {
+    // Parse the fix suggestion to extract DOM changes
+    const changes = extractDOMChanges(fix);
+    
+    // Apply each change to the page
+    for (const change of changes) {
+      const response = await sendMessage({
+        action: 'apply-patch',
+        tabId: currentTabId,
+        change
+      });
+      
+      if (response?.ok) {
+        sandboxPatches.push({
+          id: `patch-${Date.now()}-${Math.random()}`,
+          issueId: issue.id,
+          issueTitle: issue.title,
+          change,
+          timestamp: Date.now()
+        });
+      }
+    }
+    
+    // Save patches to storage
+    await saveSandboxPatches();
+    updateSandboxUI();
+    renderPatchList();
+    
+    showToast(`✓ Patch applied for: ${issue.title}`);
+  } catch (err) {
+    showToast(`Failed to apply patch: ${err.message}`);
+  }
+}
+
+function extractDOMChanges(fix) {
+  const changes = [];
+  
+  // Parse AI suggestion to find actionable DOM changes
+  // Look for common patterns like:
+  // - Add attribute: aria-label="..."
+  // - Add CSS: style="..."
+  // - Modify text content
+  // - Add/remove elements
+  
+  const lines = fix.split('\n');
+  let currentSelector = null;
+  
+  for (const line of lines) {
+    // Extract selector hints (e.g., "For <button>..." or "Target: .my-class")
+    const selectorMatch = line.match(/(?:For|Target:|Element:)\s*([<\[.][\w\-#.>\[\]="' ]+)/i);
+    if (selectorMatch) {
+      currentSelector = extractSelector(selectorMatch[1]);
+    }
+    
+    // Extract attribute additions
+    const attrMatch = line.match(/(?:Add|Set)\s+(\w+(?:-\w+)*)=\"([^\"]+)\"/i);
+    if (attrMatch && currentSelector) {
+      changes.push({
+        type: PATCH_TYPE.ATTRIBUTE,
+        selector: currentSelector,
+        attribute: attrMatch[1],
+        value: attrMatch[2]
+      });
+    }
+    
+    // Extract aria-* attributes specifically
+    const ariaMatch = line.match(/(aria-[\w-]+)=\"([^\"]+)\"/);
+    if (ariaMatch && currentSelector) {
+      changes.push({
+        type: PATCH_TYPE.ATTRIBUTE,
+        selector: currentSelector,
+        attribute: ariaMatch[1],
+        value: ariaMatch[2]
+      });
+    }
+    
+    // Extract role additions
+    const roleMatch = line.match(/role=\"([^\"]+)\"/);
+    if (roleMatch && currentSelector) {
+      changes.push({
+        type: PATCH_TYPE.ATTRIBUTE,
+        selector: currentSelector,
+        attribute: 'role',
+        value: roleMatch[1]
+      });
+    }
+  }
+  
+  return changes;
+}
+
+function extractSelector(rawSelector) {
+  // Convert human-readable selector hints to CSS selectors
+  const cleaned = rawSelector.trim();
+  
+  if (cleaned.startsWith('<') && cleaned.includes('>')) {
+    // e.g., "<button>" -> "button"
+    return cleaned.replace(/<|>/g, '').split(/\s+/)[0];
+  }
+  
+  if (cleaned.startsWith('.') || cleaned.startsWith('#') || cleaned.startsWith('[')) {
+    return cleaned;
+  }
+  
+  return cleaned;
+}
+
+async function undoLastPatch() {
+  if (sandboxPatches.length === 0) return;
+  
+  const patch = sandboxPatches.pop();
+  
+  try {
+    const response = await sendMessage({
+      action: 'undo-patch',
+      tabId: currentTabId,
+      patchId: patch.id
+    });
+    
+    if (response?.ok) {
+      await saveSandboxPatches();
+      updateSandboxUI();
+      renderPatchList();
+      showToast('✓ Patch undone');
+    }
+  } catch (err) {
+    // Re-add if undo failed
+    sandboxPatches.push(patch);
+    showToast(`Failed to undo: ${err.message}`);
+  }
+}
+
+async function resetSandbox() {
+  if (sandboxPatches.length === 0) return;
+  
+  if (!confirm(`Reset all ${sandboxPatches.length} patches? This will revert all changes.`)) {
+    return;
+  }
+  
+  try {
+    const response = await sendMessage({
+      action: 'reset-patches',
+      tabId: currentTabId
+    });
+    
+    if (response?.ok) {
+      sandboxPatches.length = 0;
+      await chrome.storage.local.remove(SANDBOX_CACHE_KEY);
+      updateSandboxUI();
+      renderPatchList();
+      showToast('✓ All patches cleared');
+    }
+  } catch (err) {
+    showToast(`Failed to reset: ${err.message}`);
+  }
+}
+
+async function downloadPatch() {
+  if (sandboxPatches.length === 0) {
+    showToast('No patches to download');
+    return;
+  }
+  
+  // Generate CSS and JS override files
+  const cssPatches = [];
+  const jsPatches = [];
+  
+  for (const patch of sandboxPatches) {
+    const { change } = patch;
+    
+    if (change.type === PATCH_TYPE.ATTRIBUTE) {
+      // Most attribute changes need JavaScript
+      jsPatches.push(`
+// Fix: ${patch.issueTitle}
+document.querySelectorAll('${change.selector}').forEach(el => {
+  el.setAttribute('${change.attribute}', '${change.value}');
+});`);
+    } else if (change.type === PATCH_TYPE.CSS) {
+      cssPatches.push(`
+/* Fix: ${patch.issueTitle} */
+${change.selector} {
+  ${change.property}: ${change.value};
+}`);
+    }
+  }
+  
+  // Create downloadable files
+  const timestamp = new Date().toISOString().slice(0, 10);
+  
+  if (cssPatches.length > 0) {
+    const cssContent = `/* SiteScope 360 Accessibility Patches
+ * Generated: ${new Date().toLocaleString()}
+ * Total patches: ${cssPatches.length}
+ */\n${cssPatches.join('\n')}`;
+    
+    downloadFile(`accessibility-fixes-${timestamp}.css`, cssContent, 'text/css');
+  }
+  
+  if (jsPatches.length > 0) {
+    const jsContent = `/* SiteScope 360 Accessibility Patches
+ * Generated: ${new Date().toLocaleString()}
+ * Total patches: ${jsPatches.length}
+ */
+
+(function() {
+  'use strict';
+  
+  // Wait for DOM to be ready
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', applyPatches);
+  } else {
+    applyPatches();
+  }
+  
+  function applyPatches() {
+${jsPatches.join('\n')}
+  }
+})();`;
+    
+    downloadFile(`accessibility-fixes-${timestamp}.js`, jsContent, 'text/javascript');
+  }
+  
+  showToast(`✓ Downloaded ${cssPatches.length + jsPatches.length} patch file(s)`);
+}
+
+function downloadFile(filename, content, mimeType) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function updateSandboxUI() {
+  const patchCount = sandboxPatches.length;
+  const domCount = sandboxPatches.reduce((sum, p) => sum + (p.change ? 1 : 0), 0);
+  
+  els.sandboxPatchCount.textContent = patchCount;
+  els.sandboxDomCount.textContent = domCount;
+  
+  els.btnDownloadPatch.disabled = patchCount === 0;
+  els.btnUndoPatch.disabled = patchCount === 0;
+  els.btnResetSandbox.disabled = patchCount === 0;
+}
+
+function renderPatchList() {
+  if (sandboxPatches.length === 0) {
+    els.sandboxPatchList.innerHTML = '<div class="sandbox-empty">No patches applied yet. Click "Apply Fix" on any issue to test it live.</div>';
+    return;
+  }
+  
+  els.sandboxPatchList.innerHTML = sandboxPatches.map((patch, idx) => `
+    <div class="sandbox-patch-item">
+      <div class="sandbox-patch-num">${idx + 1}</div>
+      <div class="sandbox-patch-info">
+        <div class="sandbox-patch-title">${escHtml(patch.issueTitle)}</div>
+        <div class="sandbox-patch-meta">${patch.change.type} · ${patch.change.selector || 'global'}</div>
+      </div>
+      <button class="sandbox-patch-remove" data-idx="${idx}" title="Remove this patch">✕</button>
+    </div>
+  `).join('');
+  
+  // Bind remove buttons
+  $$('.sandbox-patch-remove').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const idx = parseInt(btn.dataset.idx);
+      sandboxPatches.splice(idx, 1);
+      await saveSandboxPatches();
+      updateSandboxUI();
+      renderPatchList();
+    });
+  });
+}
+
+async function saveSandboxPatches() {
+  await chrome.storage.local.set({
+    [SANDBOX_CACHE_KEY]: {
+      tabId: currentTabId,
+      patches: sandboxPatches,
+      timestamp: Date.now()
+    }
+  });
+}
+
+async function loadSandboxPatches() {
+  const result = await chrome.storage.local.get(SANDBOX_CACHE_KEY);
+  const cached = result[SANDBOX_CACHE_KEY];
+  
+  if (cached && cached.tabId === currentTabId) {
+    sandboxPatches.length = 0;
+    sandboxPatches.push(...cached.patches);
+  }
 }
 
 /* ═══════ Scan ═══════ */
@@ -1387,6 +1755,14 @@ function showFixModal(fix, issue) {
   const sourceLabel = fix.source || 'unknown';
   const confidence = fix.confidence ? `${Math.round(fix.confidence * 100)}%` : '—';
   
+  // Add "Apply Fix" button if sandbox mode is active
+  const sandboxBtn = sandboxActive ? `
+    <button class="fix-apply-btn" id="fix-apply">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+      Apply to Page (Sandbox)
+    </button>
+  ` : '';
+  
   els.fixBody.innerHTML = `
     <div class="fix-label">Current Code</div>
     <div class="fix-code before">${escapeHtml(fix.before || '(no code)')}</div>
@@ -1403,7 +1779,10 @@ function showFixModal(fix, issue) {
       <span>Confidence: ${confidence}</span>
     </div>
     
-    <button class="fix-copy-btn" id="fix-copy">${SVG.copy} Copy Suggested Code</button>
+    <div class="fix-actions">
+      <button class="fix-copy-btn" id="fix-copy">${SVG.copy} Copy Code</button>
+      ${sandboxBtn}
+    </div>
   `;
 
   const copyBtn = $('#fix-copy');
@@ -1412,11 +1791,27 @@ function showFixModal(fix, issue) {
       await navigator.clipboard.writeText(fix.after || '');
       copyBtn.innerHTML = SVG.check + ' Copied!';
       showToast('Code copied to clipboard');
-      setTimeout(() => { copyBtn.innerHTML = SVG.copy + ' Copy Suggested Code'; }, 2000);
+      setTimeout(() => { copyBtn.innerHTML = SVG.copy + ' Copy Code'; }, 2000);
     } catch {
       copyBtn.textContent = 'Copy failed';
     }
   });
+  
+  // Sandbox apply button
+  if (sandboxActive) {
+    const applyBtn = $('#fix-apply');
+    applyBtn?.addEventListener('click', async () => {
+      applyBtn.disabled = true;
+      applyBtn.innerHTML = '<span class="spinner-sm"></span> Applying...';
+      
+      await applyPatch(issue, fix.after || fix.explanation);
+      
+      applyBtn.innerHTML = SVG.checkCircle + ' Applied!';
+      setTimeout(() => {
+        closeFixModal();
+      }, 1000);
+    });
+  }
 
   els.fixModal.classList.remove('hidden');
 }

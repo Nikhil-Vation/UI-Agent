@@ -41,6 +41,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     'spotlight':          () => sendToTab(msg.tabId, { type: 'spotlight', selector: msg.selector }),
     'fetch-lighthouse':   () => handleFetchLighthouse(msg.url),
     'get-lighthouse':     () => Promise.resolve(getLighthouseCache(msg.url)),
+    'apply-patch':        () => sendToTab(msg.tabId, { type: 'apply-patch', change: msg.change, patchId: msg.change.id || `patch-${Date.now()}` }),
+    'undo-patch':         () => sendToTab(msg.tabId, { type: 'undo-patch', patchId: msg.patchId }),
+    'reset-patches':      () => sendToTab(msg.tabId, { type: 'reset-patches' }),
   };
 
   const handler = handlers[msg.action];

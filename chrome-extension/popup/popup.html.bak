@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Accea Agent — Accessibility Scanner</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <!-- ═══════ Confetti canvas ═══════ -->
+  <canvas id="confetti-canvas"></canvas>
+
+  <!-- ═══════ Toast notification ═══════ -->
+  <div id="toast" class="toast"></div>
+
+  <!-- ═══════ Header ═══════ -->
+  <header class="header">
+    <div class="header-left">
+      <img src="../icons/icon-48.png" alt="" class="logo" width="26" height="26">
+      <h1>Accea Agent</h1>
+    </div>
+    <div class="header-right">
+      <button id="btn-settings" class="icon-btn" title="Settings" aria-label="Settings">⚙️</button>
+    </div>
+  </header>
+
+  <!-- ═══════ Main scan view ═══════ -->
+  <main id="view-main">
+
+    <!-- ═══════ Intro Hero (vanishes on first scan) ═══════ -->
+    <div id="intro-hero" class="intro-hero">
+      <div class="intro-glow"></div>
+      <div class="intro-icon-stack">
+        <span class="intro-icon intro-icon-1">♿</span>
+        <span class="intro-icon intro-icon-2">🛡️</span>
+        <span class="intro-icon intro-icon-3">✨</span>
+      </div>
+      <h2 class="intro-title">Make the Web <span id="typewriter-word" class="typewriter-word"></span><span class="intro-cursor">|</span></h2>
+      <p class="intro-subtitle">Accea Agent scans any webpage for <strong>WCAG accessibility issues</strong>, gives you an instant score, and uses <strong>AI to suggest code fixes</strong> — all while keeping your data <em>100% private</em>.</p>
+      <div class="intro-features">
+        <div class="intro-feature">
+          <span class="intro-feature-icon">🔍</span>
+          <span class="intro-feature-text">One-click scan</span>
+        </div>
+        <div class="intro-feature">
+          <span class="intro-feature-icon">🤖</span>
+          <span class="intro-feature-text">AI code suggestions</span>
+        </div>
+        <div class="intro-feature">
+          <span class="intro-feature-icon">📱</span>
+          <span class="intro-feature-text">Mobile responsive</span>
+        </div>
+        <div class="intro-feature">
+          <span class="intro-feature-icon">⚡</span>
+          <span class="intro-feature-text">Lazy loading tips</span>
+        </div>
+        <div class="intro-feature">
+          <span class="intro-feature-icon">🔒</span>
+          <span class="intro-feature-text">Privacy first</span>
+        </div>
+        <div class="intro-feature">
+          <span class="intro-feature-icon">📊</span>
+          <span class="intro-feature-text">Lighthouse tips</span>
+        </div>
+      </div>
+      <div class="intro-arrow">
+        <span>👇</span>
+        <span class="intro-arrow-text">Hit Scan to get started</span>
+      </div>
+    </div>
+
+    <!-- Score card -->
+    <div id="score-card" class="score-card hidden">
+      <div class="score-ring">
+        <svg viewBox="0 0 36 36" class="score-svg">
+          <path class="score-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"/>
+          <path id="score-arc" class="score-fg" stroke-dasharray="0, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"/>
+        </svg>
+        <span id="score-number" class="score-number">—</span>
+      </div>
+      <div class="score-meta">
+        <span id="score-status" class="score-status"></span>
+        <span id="score-grade" class="score-grade hidden"></span>
+        <span id="score-summary" class="score-summary"></span>
+        <span id="scan-time" class="scan-time hidden"></span>
+      </div>
+    </div>
+
+    <!-- Severity badges -->
+    <div id="severity-badges" class="severity-badges hidden">
+      <span class="badge badge-critical" id="badge-critical" title="Critical">0</span>
+      <span class="badge badge-serious" id="badge-serious" title="Serious">0</span>
+      <span class="badge badge-moderate" id="badge-moderate" title="Moderate">0</span>
+      <span class="badge badge-minor" id="badge-minor" title="Minor">0</span>
+    </div>
+
+    <!-- Tab bar (Issues / History / Tips / Export) -->
+    <div id="tab-bar" class="tab-bar hidden">
+      <button class="tab-btn active" data-tab="issues">🔍 Issues</button>
+      <button class="tab-btn" data-tab="checklist">✅ Checklist</button>
+      <button class="tab-btn" data-tab="tips">🚀 Tips</button>
+      <button class="tab-btn" data-tab="history">📈 History</button>
+      <button class="tab-btn" data-tab="export">📤 Export</button>
+    </div>
+
+    <!-- Quick actions -->
+    <div id="quick-actions" class="quick-actions hidden">
+      <button id="btn-highlight" class="quick-action-btn" title="Toggle highlights on page">👁️ Highlight</button>
+      <button id="btn-fix-all" class="quick-action-btn" title="Get AI code suggestions for all issues">✨ Suggest All</button>
+      <button id="btn-clear" class="quick-action-btn" title="Clear highlights">🗑️ Clear</button>
+    </div>
+
+    <!-- Severity filter pills -->
+    <div id="filter-bar" class="filter-bar hidden">
+      <button class="filter-pill active-all" data-filter="all">All</button>
+      <button class="filter-pill" data-filter="critical">Critical</button>
+      <button class="filter-pill" data-filter="serious">Serious</button>
+      <button class="filter-pill" data-filter="moderate">Moderate</button>
+      <button class="filter-pill" data-filter="minor">Minor</button>
+    </div>
+
+    <!-- Scan button -->
+    <button id="btn-scan" class="btn-scan">
+      <span class="btn-scan-icon">🔍</span>
+      <span class="btn-scan-text">Scan This Page</span>
+    </button>
+    <div class="shortcut-hint">Press <kbd>⌘</kbd><kbd>⇧</kbd><kbd>A</kbd> to scan</div>
+
+    <!-- Loading state -->
+    <div id="loading" class="loading hidden">
+      <div class="spinner"></div>
+      <span class="loading-text">Scanning for accessibility issues…</span>
+      <div class="scan-progress">
+        <div id="scan-progress-bar" class="scan-progress-bar"></div>
+      </div>
+    </div>
+
+    <!-- Error -->
+    <div id="error" class="error hidden">
+      <span id="error-text"></span>
+    </div>
+
+
+
+    <!-- ═══ Tab: Issues ═══ -->
+    <div id="tab-issues" class="tab-content active">
+      <div id="issues-container" class="issues-container hidden">
+        <div class="issues-header">
+          <h2>Issues <span id="issue-count" class="issue-count"></span></h2>
+        </div>
+        <ul id="issues-list" class="issues-list" role="list"></ul>
+      </div>
+    </div>
+
+    <!-- ═══ Tab: Checklist ═══ -->
+    <div id="tab-checklist" class="tab-content">
+      <div class="checklist-container">
+        <!-- Lighthouse Score Circles (top of checklist) -->
+        <div id="checklist-lighthouse" class="checklist-lighthouse hidden">
+          <div id="checklist-lh-scores" class="checklist-lh-scores">
+            <!-- Populated by JS -->
+          </div>
+        </div>
+
+        <div id="checklist-list" class="checklist-list">
+          <!-- Populated by JS after scan -->
+        </div>
+        <div id="checklist-empty" class="history-empty">
+          <div class="history-empty-icon">✅</div>
+          <div>Run a scan to see the checklist</div>
+          <div style="font-size:11px; margin-top:4px;">Checks essential web parameters automatically</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ Tab: History ═══ -->
+    <div id="tab-history" class="tab-content">
+      <div class="history-container">
+        <div id="history-empty" class="history-empty">
+          <div class="history-empty-icon">📊</div>
+          <div>No scan history yet</div>
+          <div style="font-size:11px; margin-top:4px;">Scan a page to start tracking</div>
+        </div>
+        <ul id="history-list" class="history-list"></ul>
+      </div>
+    </div>
+
+    <!-- ═══ Tab: Tips (Lighthouse + SEO + Improvements) ═══ -->
+    <div id="tab-tips" class="tab-content">
+      <div class="tips-container">
+        <!-- Real Lighthouse Scores -->
+        <div id="lighthouse-section" class="tips-section hidden">
+          <div class="tips-section-header">
+            <span class="tips-section-icon">🔦</span>
+            <h3>Lighthouse Scores</h3>
+            <span id="lh-status" class="lh-status-badge"></span>
+          </div>
+          <div id="lighthouse-scores" class="lighthouse-scores">
+            <!-- Populated by JS: real scores or skeleton -->
+          </div>
+        </div>
+
+        <!-- Quick Wins -->
+        <div id="quick-wins" class="tips-section hidden">
+          <div class="tips-section-header">
+            <span class="tips-section-icon">⚡</span>
+            <h3>Quick Wins — Tackle First</h3>
+          </div>
+          <ul id="quick-wins-list" class="tips-list"></ul>
+        </div>
+
+        <!-- SEO Crossover -->
+        <div id="seo-crossover" class="tips-section hidden">
+          <div class="tips-section-header">
+            <span class="tips-section-icon">🔍</span>
+            <h3>SEO Impact from Your Issues</h3>
+          </div>
+          <ul id="seo-crossover-list" class="tips-list"></ul>
+        </div>
+
+        <!-- Improvement Insights -->
+        <div id="improvement-insights" class="tips-section hidden">
+          <div class="tips-section-header">
+            <span class="tips-section-icon">🔧</span>
+            <h3>What to Improve & Its Impact</h3>
+          </div>
+          <ul id="improvement-list" class="tips-list"></ul>
+        </div>
+
+        <!-- No scan state -->
+        <div id="tips-empty" class="history-empty">
+          <div class="history-empty-icon">🚀</div>
+          <div>Run a scan to get tips</div>
+          <div style="font-size:11px; margin-top:4px;">Lighthouse, SEO & improvement insights</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ Tab: Export ═══ -->
+    <div id="tab-export" class="tab-content">
+      <div class="export-container">
+        <div class="export-grid">
+          <div class="export-card" data-export="json">
+            <span class="export-card-icon">📋</span>
+            <span class="export-card-label">JSON</span>
+            <span class="export-card-desc">Raw data</span>
+          </div>
+          <div class="export-card" data-export="csv">
+            <span class="export-card-icon">📊</span>
+            <span class="export-card-label">CSV</span>
+            <span class="export-card-desc">Spreadsheet</span>
+          </div>
+          <div class="export-card" data-export="pdf">
+            <span class="export-card-icon">📄</span>
+            <span class="export-card-label">PDF Report</span>
+            <span class="export-card-desc">Detailed & printable</span>
+          </div>
+          <div class="export-card" data-export="clipboard">
+            <span class="export-card-icon">📎</span>
+            <span class="export-card-label">Clipboard</span>
+            <span class="export-card-desc">Copy summary</span>
+          </div>
+        </div>
+
+        <!-- Tech Stack Info -->
+        <div class="tech-stack-section">
+          <div class="tips-section-header" style="margin-top:12px;">
+            <span class="tips-section-icon">🛠️</span>
+            <h3>Tech Stack</h3>
+          </div>
+          <div class="tech-stack-grid">
+            <div class="tech-chip"><span class="tech-chip-icon">🧩</span> Manifest V3</div>
+            <div class="tech-chip"><span class="tech-chip-icon">♿</span> axe-core 4.10.2</div>
+            <div class="tech-chip"><span class="tech-chip-icon">⚡</span> Vanilla JS</div>
+            <div class="tech-chip"><span class="tech-chip-icon">🤖</span> AI Suggestions</div>
+            <div class="tech-chip"><span class="tech-chip-icon">🟢</span> Node.js + Express</div>
+            <div class="tech-chip"><span class="tech-chip-icon">🔒</span> Zero npm deps</div>
+            <div class="tech-chip"><span class="tech-chip-icon">🛡️</span> PII Redactor</div>
+          </div>
+          <div class="tech-stack-footer">
+            0 npm dependencies · 100% auditable · Privacy-first
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- ═══════ Settings view ═══════ -->
+  <div id="view-settings" class="view-settings hidden">
+    <div class="settings-header">
+      <button id="btn-back" class="icon-btn" aria-label="Back">← Back</button>
+      <h2>Settings</h2>
+    </div>
+
+    <div class="settings-group">
+      <h3>🔒 Privacy</h3>
+      <label class="toggle-label">
+        <input type="checkbox" id="setting-privacy" checked>
+        <span>Privacy Mode (no data leaves your machine)</span>
+      </label>
+      <label class="toggle-label">
+        <input type="checkbox" id="setting-cloud">
+        <span>Allow cloud AI (data is redacted first)</span>
+      </label>
+    </div>
+
+    <div class="settings-group">
+      <h3>🖥️ Local Server</h3>
+      <label class="input-label">
+        <span>Orchestrator URL</span>
+        <input type="url" id="setting-server-url" placeholder="http://localhost:3000" value="http://localhost:3000">
+      </label>
+    </div>
+
+    <div class="settings-group">
+      <h3>🎨 Display</h3>
+      <label class="toggle-label">
+        <input type="checkbox" id="setting-auto-highlight" checked>
+        <span>Auto-highlight issues after scan</span>
+      </label>
+      <label class="toggle-label">
+        <input type="checkbox" id="setting-badge" checked>
+        <span>Show issue count on icon</span>
+      </label>
+    </div>
+
+    <div class="settings-group">
+      <h3>📊 AI Engine</h3>
+      <div id="capabilities-info" class="capabilities-info">
+        <div class="cap-row"><span>AI Suggestions</span><span id="cap-windowai" class="cap-status">…</span></div>
+        <div class="cap-row"><span>Local Server</span><span id="cap-localhost" class="cap-status">…</span></div>
+        <div class="cap-row"><span>Cloud Fallback</span><span id="cap-cloud" class="cap-status">…</span></div>
+      </div>
+      <button id="btn-detect" class="small-btn" style="margin-top:8px">🔄 Re-detect</button>
+    </div>
+  </div>
+
+  <!-- ═══════ Fix detail modal ═══════ -->
+  <div id="fix-modal" class="fix-modal hidden" role="dialog" aria-label="Code suggestion details">
+    <div class="fix-modal-content">
+      <div class="fix-modal-header">
+        <h3 id="fix-title">Code Suggestion</h3>
+        <button id="fix-close" class="icon-btn" aria-label="Close">✕</button>
+      </div>
+      <div id="fix-body" class="fix-body">
+        <!-- Populated by JS -->
+      </div>
+    </div>
+  </div>
+
+  <script src="popup.js" type="module"></script>
+</body>
+</html>
