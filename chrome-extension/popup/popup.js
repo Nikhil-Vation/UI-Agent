@@ -1144,7 +1144,7 @@ function renderPatchList() {
     <div class="sandbox-patch-item">
       <div class="sandbox-patch-num">${idx + 1}</div>
       <div class="sandbox-patch-info">
-        <div class="sandbox-patch-title">${escHtml(patch.issueTitle)}</div>
+        <div class="sandbox-patch-title">${escapeHtml(patch.issueTitle)}</div>
         <div class="sandbox-patch-meta">${patch.change.type} · ${patch.change.selector || 'global'}</div>
       </div>
       <button class="sandbox-patch-remove" data-idx="${idx}" title="Remove this patch">✕</button>
