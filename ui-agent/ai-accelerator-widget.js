@@ -576,6 +576,15 @@ class AIAcceleratorWidget extends HTMLElement {
               </p>
             </div>
           ` : ''}
+          <div class="aa-fix-it-section">
+            <button class="aa-fix-btn" data-issue-idx="${idx}" data-action="fix-issue">
+              🔧 Fix it for me
+            </button>
+            <div class="aa-fix-result" id="aa-fix-result-${idx}" style="display:none;">
+              <div class="aa-fix-loading" style="display:none;">Generating fix with LLM…</div>
+              <div class="aa-fix-output"></div>
+            </div>
+          </div>
         </div>
       </div>
     `;
@@ -852,6 +861,15 @@ class AIAcceleratorWidget extends HTMLElement {
         this._handleUIIssuesPagination(btn);
       });
     });
+
+    // "Fix it for me" buttons
+    this.shadowRoot.querySelectorAll('.aa-fix-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const idx = parseInt(e.currentTarget.dataset.issueIdx, 10);
+        this._handleFixIssue(idx, e.currentTarget);
+      });
+    });
     
     // Export buttons
     this.shadowRoot.querySelectorAll('.aa-export-btn').forEach(btn => {
@@ -862,6 +880,85 @@ class AIAcceleratorWidget extends HTMLElement {
     });
   }
   
+  async _handleFixIssue(idx, btn) {
+    const issues = this._getIssues();
+    if (!issues || !issues[idx]) return;
+
+    const issue = issues[idx];
+    const resultEl = this.shadowRoot.getElementById(`aa-fix-result-${idx}`);
+    if (!resultEl) return;
+
+    const loadingEl = resultEl.querySelector('.aa-fix-loading');
+    const outputEl = resultEl.querySelector('.aa-fix-output');
+
+    // Show loading state
+    btn.disabled = true;
+    btn.textContent = '⏳ Generating…';
+    resultEl.style.display = 'block';
+    loadingEl.style.display = 'block';
+    outputEl.innerHTML = '';
+
+    try {
+      const apiEndpoint = this.getAttribute('api-endpoint') || 'http://localhost:3000';
+      const baseUrl = apiEndpoint.replace(/\/run$/, '');
+      const pageUrl = this._data?.report?.url || this._data?.url || '';
+
+      const response = await fetch(`${baseUrl}/fix`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ issue, url: pageUrl })
+      });
+
+      const data = await response.json();
+      loadingEl.style.display = 'none';
+
+      if (data.fix) {
+        const f = data.fix;
+        outputEl.innerHTML = `
+          <div class="aa-fix-card">
+            <div class="aa-fix-title">🔧 ${this._escapeHtml(f.fixTitle || 'Suggested Fix')}</div>
+            <div class="aa-fix-meta">
+              <span class="aa-fix-effort">Effort: <b>${f.effort || '?'}</b></span>
+              <span class="aa-fix-confidence">Confidence: <b>${Math.round((f.confidence || 0) * 100)}%</b></span>
+              ${f.propagation ? `<span class="aa-fix-propagation">⚡ Fixes <b>${f.propagation.affectedCount}</b> instances</span>` : ''}
+            </div>
+            <p class="aa-fix-explanation">${this._escapeHtml(f.explanation || '')}</p>
+            ${f.before ? `<div class="aa-fix-code-label">Before:</div><pre class="aa-fix-code aa-fix-before">${this._escapeHtml(f.before)}</pre>` : ''}
+            ${f.after ? `<div class="aa-fix-code-label">After:</div><pre class="aa-fix-code aa-fix-after">${this._escapeHtml(f.after)}</pre>` : ''}
+            ${f.testHint ? `<div class="aa-fix-test-hint">🧪 <em>${this._escapeHtml(f.testHint)}</em></div>` : ''}
+            <button class="aa-copy-fix-btn" data-fix='${JSON.stringify(f.after || '').replace(/'/g, '&#39;')}'>📋 Copy Fix</button>
+          </div>
+        `;
+        // Attach copy handler
+        const copyBtn = outputEl.querySelector('.aa-copy-fix-btn');
+        if (copyBtn) {
+          copyBtn.addEventListener('click', () => {
+            const fixText = f.after || f.diff || '';
+            navigator.clipboard.writeText(fixText).then(() => {
+              copyBtn.textContent = '✅ Copied!';
+              setTimeout(() => { copyBtn.textContent = '📋 Copy Fix'; }, 2000);
+            });
+          });
+        }
+      } else {
+        outputEl.innerHTML = `<div class="aa-fix-error">Could not generate fix: ${this._escapeHtml(data.error || 'Unknown error')}</div>`;
+      }
+    } catch (err) {
+      loadingEl.style.display = 'none';
+      outputEl.innerHTML = `<div class="aa-fix-error">Fix request failed: ${this._escapeHtml(err.message)}</div>`;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '🔧 Fix it for me';
+    }
+  }
+
+  _getIssues() {
+    if (!this._data) return [];
+    const analysis = this._data.analysis || this._data;
+    const parsed = analysis.parsed || analysis.analysis || analysis;
+    return parsed.issues || parsed.accessibilityIssues || [];
+  }
+
   _handleExport(action) {
     if (!this._data) return;
     

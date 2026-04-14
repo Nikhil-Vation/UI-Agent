@@ -855,7 +855,7 @@ async function analyzeWithLLM(report, opts = {}) {
       method: 'POST',
       headers,
       body: JSON.stringify(bodyPayload)
-    }, 3, opts.timeoutMs || 20000);
+    }, 3, opts.timeoutMs || 120000);
 
     if (!res.ok) {
       const text = await res.text();
@@ -1111,4 +1111,4 @@ async function analyzeWithLLM(report, opts = {}) {
   }
 }
 
-module.exports = { analyzeWithLLM };
+module.exports = { analyzeWithLLM, LLM_API_URL, LLM_MODEL_NAME, LLM_API_TOKEN, LLM_USE_LOCAL };

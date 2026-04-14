@@ -1,0 +1,52 @@
+{
+  "manifest_version": 3,
+  "name": "SiteScope 360 — Site Diagnostics & Accessibility",
+  "version": "1.0.0",
+  "description": "Full-spectrum site diagnostics: accessibility audit, tech stack inspector, design profiler & AI-powered fix suggestions. 100% private — no data leaves your browser.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage"
+  ],
+  "host_permissions": [
+    "http://localhost:3000/*",
+    "http://localhost:8000/*",
+    "https://www.googleapis.com/pagespeedonline/*"
+  ],
+  "optional_host_permissions": [
+    "https://api.accea-agent.com/*"
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "background": {
+    "service_worker": "background/service-worker.js",
+    "type": "module"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["lib/axe.min.js"],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content/scanner.js", "content/redactor.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

@@ -1,0 +1,184 @@
+name: Accessibility Scan
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'URL to scan'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  a11y-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    services:
+      ollama:
+        image: ollama/ollama:latest
+        ports:
+          - 11434:11434
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Install orchestrator dependencies
+        working-directory: orchestrator
+        run: npm ci
+
+      - name: Pull LLM model
+        run: |
+          # Wait for Ollama to be ready
+          for i in $(seq 1 30); do
+            curl -s http://localhost:11434/api/tags && break || sleep 2
+          done
+          # Pull a small model for CI (adjust as needed)
+          curl -s http://localhost:11434/api/pull -d '{"name":"llama3.1:8b","stream":false}' || echo "Model pull failed (non-fatal)"
+
+      - name: Start orchestrator
+        working-directory: orchestrator
+        env:
+          LLM_API_MODE: ollama
+          LLM_API_URL: http://localhost:11434
+          LLM_MODEL_NAME: llama3.1:8b
+          LLM_USE_LOCAL: 'false'
+          PORT: 3000
+        run: |
+          node index.js &
+          sleep 3
+          curl -s http://localhost:3000/health
+
+      - name: Determine scan URL
+        id: url
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "url=${{ github.event.inputs.url }}" >> "$GITHUB_OUTPUT"
+          else
+            # Default: scan a deployment preview URL or fallback
+            echo "url=https://example.com" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run accessibility scan
+        id: scan
+        run: |
+          RESULT=$(curl -s -X POST http://localhost:3000/run \
+            -H "Content-Type: application/json" \
+            -d "{\"url\": \"${{ steps.url.outputs.url }}\"}")
+          echo "$RESULT" > scan-result.json
+
+          # Extract key metrics
+          SCORE=$(echo "$RESULT" | jq -r '.analysis.parsed.auditScore // .analysis.analysis.auditScore // "N/A"')
+          CRITICAL=$(echo "$RESULT" | jq -r '.analysis.parsed.counts.critical // .analysis.analysis.counts.critical // 0')
+          STATUS=$(echo "$RESULT" | jq -r '.analysis.parsed.complianceStatus // .analysis.analysis.complianceStatus // "Unknown"')
+          SUMMARY=$(echo "$RESULT" | jq -r '.analysis.parsed.summary // .analysis.analysis.summary // "No summary"')
+
+          echo "score=$SCORE" >> "$GITHUB_OUTPUT"
+          echo "critical=$CRITICAL" >> "$GITHUB_OUTPUT"
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+          echo "summary=$SUMMARY" >> "$GITHUB_OUTPUT"
+
+      - name: Generate fixes for critical issues
+        id: fixes
+        run: |
+          ISSUES=$(cat scan-result.json | jq -c '[.analysis.parsed.issues // .analysis.analysis.issues // [] | .[] | select(.severity == "Critical")] | .[0:5]')
+          if [ "$ISSUES" != "[]" ] && [ "$ISSUES" != "null" ]; then
+            FIX_RESULT=$(curl -s -X POST http://localhost:3000/fix/batch \
+              -H "Content-Type: application/json" \
+              -d "{\"issues\": $ISSUES, \"url\": \"${{ steps.url.outputs.url }}\"}")
+            echo "$FIX_RESULT" > fix-result.json
+            echo "has_fixes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_fixes=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Post PR Comment
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const scan = JSON.parse(fs.readFileSync('scan-result.json', 'utf8'));
+            const score = '${{ steps.scan.outputs.score }}';
+            const critical = '${{ steps.scan.outputs.critical }}';
+            const status = '${{ steps.scan.outputs.status }}';
+            const summary = '${{ steps.scan.outputs.summary }}';
+            const hasFixes = '${{ steps.fixes.outputs.has_fixes }}' === 'true';
+
+            let fixSection = '';
+            if (hasFixes) {
+              try {
+                const fixes = JSON.parse(fs.readFileSync('fix-result.json', 'utf8'));
+                if (fixes.fixes && fixes.fixes.length) {
+                  fixSection = '\n\n### 🔧 Suggested Fixes\n\n';
+                  for (const fix of fixes.fixes) {
+                    fixSection += `<details>\n<summary><b>${fix.fixTitle || fix.issueId || 'Fix'}</b> (Effort: ${fix.effort || '?'}, Confidence: ${fix.confidence || '?'})</summary>\n\n`;
+                    fixSection += `**Explanation:** ${fix.explanation || 'N/A'}\n\n`;
+                    if (fix.before) fixSection += `**Before:**\n\`\`\`html\n${fix.before}\n\`\`\`\n\n`;
+                    if (fix.after) fixSection += `**After:**\n\`\`\`html\n${fix.after}\n\`\`\`\n\n`;
+                    if (fix.propagation) fixSection += `> ⚡ Component fix — affects **${fix.propagation.affectedCount}** instances of \`${fix.propagation.selector}\`\n\n`;
+                    fixSection += `</details>\n\n`;
+                  }
+                }
+              } catch (e) { /* non-fatal */ }
+            }
+
+            const emoji = status === 'Compliant' ? '✅' : status === 'At Risk' ? '⚠️' : '🚨';
+
+            const body = `## ${emoji} Accessibility Scan Results
+
+            | Metric | Value |
+            |--------|-------|
+            | **Score** | ${score}/100 |
+            | **Status** | ${status} |
+            | **Critical Issues** | ${critical} |
+
+            **Summary:** ${summary}
+
+            ${fixSection}
+
+            <details>
+            <summary>📋 Full scan details</summary>
+
+            \`\`\`json
+            ${JSON.stringify(scan.analysis?.parsed || scan.analysis?.analysis || {}, null, 2).slice(0, 60000)}
+            \`\`\`
+
+            </details>
+
+            ---
+            *Scanned by [UI-Agent](https://github.com/Nikhil-Vation/UI-Agent) — privacy-first accessibility testing with LLM-powered fixes*`;
+
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body
+            });
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: a11y-scan-results
+          path: |
+            scan-result.json
+            fix-result.json
+
+      - name: Fail on critical issues
+        if: steps.scan.outputs.critical > 0
+        run: |
+          echo "::error::Found ${{ steps.scan.outputs.critical }} critical accessibility issues"
+          exit 1

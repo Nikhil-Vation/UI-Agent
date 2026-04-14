@@ -1484,3 +1484,158 @@
     display: block !important;
   }
 }
+
+/* ============================================================
+   "Fix it for me" button & fix result card
+   ============================================================ */
+
+.aa-fix-it-section {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255,255,255,0.06);
+}
+
+.aa-fix-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: #fff;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.25);
+}
+
+.aa-fix-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.35);
+}
+
+.aa-fix-btn:disabled {
+  opacity: 0.7;
+  cursor: wait;
+  transform: none;
+}
+
+.aa-fix-result {
+  margin-top: 12px;
+}
+
+.aa-fix-loading {
+  color: var(--aa-text-secondary, #a1a1aa);
+  font-size: 13px;
+  animation: aa-pulse 1.5s infinite;
+}
+
+@keyframes aa-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.aa-fix-card {
+  background: rgba(99, 102, 241, 0.08);
+  border: 1px solid rgba(99, 102, 241, 0.2);
+  border-radius: 10px;
+  padding: 16px;
+  margin-top: 8px;
+}
+
+.aa-fix-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--aa-text-primary, #f4f4f5);
+  margin-bottom: 8px;
+}
+
+.aa-fix-meta {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+  font-size: 12px;
+  color: var(--aa-text-secondary, #a1a1aa);
+}
+
+.aa-fix-propagation {
+  color: #f59e0b;
+  font-weight: 600;
+}
+
+.aa-fix-explanation {
+  color: var(--aa-text-secondary, #a1a1aa);
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 0 0 12px 0;
+}
+
+.aa-fix-code-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--aa-text-secondary, #a1a1aa);
+  margin-bottom: 4px;
+}
+
+.aa-fix-code {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 10px 14px;
+  border-radius: 8px;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin-bottom: 10px;
+}
+
+.aa-fix-before {
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.15);
+  color: #fca5a5;
+}
+
+.aa-fix-after {
+  background: rgba(34, 197, 94, 0.08);
+  border: 1px solid rgba(34, 197, 94, 0.15);
+  color: #86efac;
+}
+
+.aa-fix-test-hint {
+  font-size: 12px;
+  color: var(--aa-text-secondary, #a1a1aa);
+  margin-bottom: 10px;
+}
+
+.aa-copy-fix-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  border-radius: 6px;
+  cursor: pointer;
+  background: transparent;
+  color: #a5b4fc;
+  transition: all 0.2s ease;
+}
+
+.aa-copy-fix-btn:hover {
+  background: rgba(99, 102, 241, 0.15);
+}
+
+.aa-fix-error {
+  color: #fca5a5;
+  font-size: 13px;
+  padding: 10px;
+  background: rgba(239, 68, 68, 0.08);
+  border-radius: 8px;
+  border: 1px solid rgba(239, 68, 68, 0.15);
+}
