@@ -10,6 +10,7 @@
   ],
   "host_permissions": [
     "http://localhost:3000/*",
+    "http://localhost:8000/*",
     "https://www.googleapis.com/pagespeedonline/*"
   ],
   "optional_host_permissions": [

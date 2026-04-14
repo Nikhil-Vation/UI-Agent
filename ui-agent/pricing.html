@@ -1,0 +1,487 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pricing — SiteScope 360</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --orange: #f97316; --orange-dim: rgba(249,115,22,.15); --orange-glow: rgba(249,115,22,.35);
+      --bg: #080810; --bg2: #0f0f18; --bg3: #13131f;
+      --border: rgba(255,255,255,.07); --border-hi: rgba(255,255,255,.12);
+      --text: #f1f1f3; --muted: #6b7280; --muted-hi: #9ca3af; --radius: 16px;
+      --green: #22c55e; --red: #ef4444;
+    }
+    html { scroll-behavior: smooth; }
+    body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; overflow-x: hidden; -webkit-font-smoothing: antialiased; }
+
+    /* Ambient orbs */
+    .orb { position: fixed; border-radius: 50%; filter: blur(120px); pointer-events: none; z-index: 0; }
+    .orb-1 { width: 700px; height: 700px; background: rgba(249,115,22,.06); top: -200px; left: 50%; transform: translateX(-50%); }
+    .orb-2 { width: 400px; height: 400px; background: rgba(139,92,246,.05); bottom: 10%; right: -100px; }
+    .orb-3 { width: 300px; height: 300px; background: rgba(249,115,22,.04); bottom: 30%; left: -80px; }
+
+    /* Topbar */
+    .topbar { position: sticky; top: 0; z-index: 100; background: rgba(8,8,16,.85); backdrop-filter: blur(20px); border-bottom: 1px solid var(--border); }
+    .topbar-inner { max-width: 1100px; margin: 0 auto; padding: 0 24px; height: 60px; display: flex; align-items: center; justify-content: space-between; }
+    .brand { font-size: 15px; font-weight: 700; color: var(--text); text-decoration: none; letter-spacing: -.01em; }
+    .brand span { color: var(--orange); }
+
+    /* Layout */
+    .page { position: relative; z-index: 1; }
+
+    /* Hero */
+    .hero { text-align: center; padding: 96px 24px 56px; max-width: 660px; margin: 0 auto; }
+    .eyebrow { display: inline-flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--orange); background: var(--orange-dim); border: 1px solid rgba(249,115,22,.2); padding: 6px 14px; border-radius: 999px; margin-bottom: 28px; }
+    .hero h1 { font-size: clamp(2.6rem, 6vw, 4rem); font-weight: 900; line-height: 1.06; letter-spacing: -.03em; color: #fff; margin-bottom: 20px; }
+    .hero h1 em { font-style: normal; background: linear-gradient(135deg,#f97316,#fb923c,#fbbf24); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+    .hero p { font-size: 1.05rem; line-height: 1.72; color: var(--muted-hi); margin: 0 auto 44px; }
+
+    /* Toggle */
+    .toggle-wrap { display: flex; justify-content: center; margin-bottom: 68px; }
+    .toggle { display: inline-flex; align-items: center; background: var(--bg3); border: 1px solid var(--border-hi); border-radius: 999px; padding: 5px; gap: 2px; }
+    .toggle-btn { display: flex; align-items: center; gap: 6px; background: none; border: none; color: var(--muted-hi); font-family: inherit; font-size: 13px; font-weight: 500; padding: 8px 20px; border-radius: 999px; cursor: pointer; transition: all .2s; white-space: nowrap; }
+    .toggle-btn.active { background: #fff; color: #111; font-weight: 700; box-shadow: 0 2px 12px rgba(0,0,0,.3); }
+    .save-pill { font-size: 10px; font-weight: 700; background: linear-gradient(135deg,#f97316,#fbbf24); color: #fff; padding: 2px 8px; border-radius: 999px; }
+
+    /* Cards — two column centered */
+    .cards-wrap { max-width: 760px; margin: 0 auto; padding: 0 24px 100px; display: grid; grid-template-columns: repeat(2,1fr); gap: 20px; align-items: start; }
+    @media (max-width: 700px) { .cards-wrap { grid-template-columns: 1fr; max-width: 420px; } }
+
+    .card { background: var(--bg2); border: 1px solid var(--border); border-radius: 22px; padding: 32px 28px 28px; position: relative; transition: border-color .25s, transform .25s, box-shadow .25s; }
+    .card:hover { border-color: var(--border-hi); transform: translateY(-5px); box-shadow: 0 24px 60px rgba(0,0,0,.5); }
+    .card.popular { background: linear-gradient(160deg,#12111e,#0f0e1c); border-color: var(--orange); box-shadow: 0 0 0 1px rgba(249,115,22,.2), 0 20px 60px rgba(249,115,22,.12); transform: translateY(-10px); }
+    .card.popular:hover { transform: translateY(-16px); box-shadow: 0 0 0 1px rgba(249,115,22,.35), 0 32px 80px rgba(249,115,22,.2); }
+    .card.ring { box-shadow: 0 0 0 3px var(--orange), 0 20px 60px rgba(249,115,22,.2) !important; }
+
+    .popular-ribbon { position: absolute; top: -1px; left: 50%; transform: translateX(-50%); background: linear-gradient(90deg,#f97316,#fb923c); color: #fff; font-size: 10px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; padding: 5px 20px; border-radius: 0 0 12px 12px; white-space: nowrap; }
+
+    .plan-label { font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--muted-hi); margin-bottom: 16px; }
+    .card.popular .plan-label { color: var(--orange); }
+
+    .price-row { display: flex; align-items: flex-end; gap: 4px; margin-bottom: 8px; }
+    .price-amount { font-size: 3.6rem; font-weight: 900; line-height: 1; letter-spacing: -.04em; color: #fff; }
+    .price-per { font-size: 13px; color: var(--muted); padding-bottom: 8px; }
+
+    .plan-tagline { font-size: 13px; color: var(--muted-hi); line-height: 1.6; margin-bottom: 24px; min-height: 40px; }
+
+    .divider { height: 1px; background: var(--border); margin-bottom: 22px; }
+
+    .features-list { list-style: none; display: flex; flex-direction: column; gap: 10px; margin-bottom: 32px; }
+    .features-list li { display: flex; align-items: center; gap: 10px; font-size: 13px; color: #c4c4d0; line-height: 1.4; }
+    .features-list li.off { color: #383850; }
+    .feat-icon { width: 17px; height: 17px; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 9px; font-weight: 900; }
+    .feat-icon.on  { background: var(--orange-dim); color: var(--orange); }
+    .feat-icon.off { background: rgba(255,255,255,.03); color: #383850; }
+
+    /* CTA */
+    .cta-btn { display: block; width: 100%; padding: 14px 20px; border-radius: 12px; font-family: inherit; font-size: 14px; font-weight: 700; text-align: center; text-decoration: none; cursor: pointer; border: none; transition: all .2s; letter-spacing: .01em; }
+    .cta-btn.solid { background: linear-gradient(135deg,#f97316,#fb923c); color: #fff; box-shadow: 0 4px 24px rgba(249,115,22,.35); }
+    .cta-btn.solid:hover { box-shadow: 0 8px 36px rgba(249,115,22,.55); transform: translateY(-2px); }
+    .cta-btn.outline { background: transparent; color: var(--muted-hi); border: 1px solid var(--border-hi); }
+    .cta-btn.outline:hover { background: rgba(255,255,255,.05); color: #fff; border-color: rgba(255,255,255,.2); }
+
+    /* Trust row */
+    .trust-row { display: flex; justify-content: center; gap: 28px; flex-wrap: wrap; padding: 0 24px 80px; max-width: 700px; margin: 0 auto; }
+    .trust-item { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+    .trust-item span { font-size: 15px; }
+
+    /* Compare table — Free vs Pro */
+    .compare-section { max-width: 640px; margin: 0 auto 100px; padding: 0 24px; }
+    .section-title { text-align: center; font-size: 1.7rem; font-weight: 800; letter-spacing: -.02em; color: #fff; margin-bottom: 8px; }
+    .section-sub { text-align: center; color: var(--muted); font-size: 14px; margin-bottom: 40px; }
+    .compare-table { width: 100%; border-collapse: collapse; border-radius: 16px; overflow: hidden; border: 1px solid var(--border); }
+    .compare-table thead th { background: var(--bg3); padding: 16px 20px; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted-hi); text-align: center; border-bottom: 1px solid var(--border); }
+    .compare-table thead th:first-child { text-align: left; color: var(--muted); }
+    .compare-table thead th.col-pro { color: var(--orange); }
+    .compare-table tbody tr { border-bottom: 1px solid var(--border); }
+    .compare-table tbody tr:last-child { border-bottom: none; }
+    .compare-table tbody tr:hover td { background: rgba(255,255,255,.02); }
+    .compare-table td { padding: 13px 20px; font-size: 13px; color: var(--muted-hi); text-align: center; background: var(--bg2); }
+    .compare-table td:first-child { text-align: left; color: var(--text); font-weight: 500; }
+    .compare-table td .check { color: var(--orange); font-size: 14px; }
+    .compare-table td .cross { color: #252535; font-size: 14px; }
+    .compare-table td .val { color: #fff; font-weight: 700; font-size: 13px; }
+
+    /* FAQ */
+    .faq-section { max-width: 640px; margin: 0 auto 100px; padding: 0 24px; }
+    .faq-item { border-bottom: 1px solid var(--border); }
+    .faq-item summary { padding: 20px 0; font-size: 14px; font-weight: 600; color: var(--text); cursor: pointer; list-style: none; display: flex; justify-content: space-between; align-items: center; gap: 16px; user-select: none; }
+    .faq-item summary::-webkit-details-marker { display: none; }
+    .faq-chevron { width: 22px; height: 22px; border-radius: 6px; background: var(--bg3); border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 14px; color: var(--orange); transition: transform .2s; }
+    .faq-item[open] .faq-chevron { transform: rotate(45deg); }
+    .faq-item p { padding: 0 0 20px; font-size: 13.5px; color: var(--muted-hi); line-height: 1.75; }
+
+    /* Footer */
+    .footer { border-top: 1px solid var(--border); padding: 28px 24px; }
+    .footer-inner { max-width: 1100px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+    .footer p { font-size: 13px; color: var(--muted); }
+
+    /* ── Demo Request Modal ── */
+    .modal-backdrop { display: none; position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,.65); backdrop-filter: blur(8px); align-items: center; justify-content: center; animation: fadeIn .2s ease-out; }
+    .modal-backdrop.open { display: flex; }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+    .modal { background: var(--bg2); border: 1px solid var(--border-hi); border-radius: 20px; padding: 36px 32px 32px; max-width: 420px; width: 92%; position: relative; box-shadow: 0 32px 80px rgba(0,0,0,.6); animation: modalIn .25s ease-out; }
+    @keyframes modalIn { from { opacity: 0; transform: translateY(16px) scale(.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
+    .modal-close { position: absolute; top: 14px; right: 14px; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 18px; line-height: 1; padding: 4px; border-radius: 6px; transition: color .15s, background .15s; }
+    .modal-close:hover { color: var(--text); background: rgba(255,255,255,.06); }
+    .modal h2 { font-size: 1.3rem; font-weight: 800; margin-bottom: 4px; color: #fff; }
+    .modal .modal-sub { font-size: 13px; color: var(--muted-hi); margin-bottom: 24px; line-height: 1.6; }
+
+    .form-group { margin-bottom: 16px; }
+    .form-group label { display: block; font-size: 12px; font-weight: 600; color: var(--muted-hi); margin-bottom: 6px; letter-spacing: .03em; }
+    .form-group input { width: 100%; padding: 11px 14px; background: var(--bg3); border: 1px solid var(--border-hi); border-radius: 10px; color: var(--text); font-family: inherit; font-size: 14px; outline: none; transition: border-color .2s, box-shadow .2s; }
+    .form-group input::placeholder { color: #4b5563; }
+    .form-group input:focus { border-color: var(--orange); box-shadow: 0 0 0 3px rgba(249,115,22,.15); }
+    .form-group input.invalid { border-color: var(--red); box-shadow: 0 0 0 3px rgba(239,68,68,.15); }
+    .form-group input.valid { border-color: var(--green); }
+    .form-error { font-size: 11px; color: var(--red); margin-top: 4px; min-height: 16px; }
+
+    .modal-submit { width: 100%; padding: 13px 20px; border: none; border-radius: 12px; background: linear-gradient(135deg,#f97316,#fb923c); color: #fff; font-family: inherit; font-size: 14px; font-weight: 700; cursor: pointer; transition: all .2s; margin-top: 8px; }
+    .modal-submit:hover:not(:disabled) { box-shadow: 0 8px 36px rgba(249,115,22,.45); transform: translateY(-1px); }
+    .modal-submit:disabled { opacity: .5; cursor: not-allowed; }
+
+    /* Success state */
+    .modal-success { text-align: center; padding: 20px 0 8px; }
+    .modal-success .success-icon { font-size: 48px; margin-bottom: 16px; animation: successPop .4s cubic-bezier(.34,1.56,.64,1); }
+    @keyframes successPop { 0% { transform: scale(0); } 60% { transform: scale(1.15); } 100% { transform: scale(1); } }
+    .modal-success h3 { font-size: 1.2rem; font-weight: 800; color: #fff; margin-bottom: 8px; }
+    .modal-success p { font-size: 13.5px; color: var(--muted-hi); line-height: 1.6; }
+  </style>
+</head>
+<body>
+  <div class="orb orb-1"></div>
+  <div class="orb orb-2"></div>
+  <div class="orb orb-3"></div>
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="../landing.html">Site<span>Scope 360</span></a>
+    </div>
+  </header>
+
+  <div class="page">
+
+    <div class="hero">
+      <div class="eyebrow">✦ Pricing</div>
+      <h1>Pay for what you<br><em>actually</em> use</h1>
+      <p>Start scanning for free. Unlock AI-powered fixes, Lighthouse reports, and live preview when you're ready.</p>
+    </div>
+
+    <div class="toggle-wrap">
+      <div class="toggle">
+        <button class="toggle-btn active" id="btnMonthly">Monthly</button>
+        <button class="toggle-btn" id="btnAnnual">Annual <span class="save-pill">−20%</span></button>
+      </div>
+    </div>
+
+    <div class="cards-wrap">
+
+      <!-- Free -->
+      <div class="card" data-plan="free">
+        <div class="plan-label">Free</div>
+        <div class="price-row">
+          <div class="price-amount">$0</div>
+          <div class="price-per">/ mo</div>
+        </div>
+        <div class="plan-tagline">Everything you need to get started — no card required.</div>
+        <div class="divider"></div>
+        <ul class="features-list">
+          <li><span class="feat-icon on">✓</span> 3 scans per day</li>
+          <li><span class="feat-icon on">✓</span> axe-core WCAG 2.2 audit</li>
+          <li><span class="feat-icon on">✓</span> Mobile + tablet + desktop</li>
+          <li><span class="feat-icon on">✓</span> Basic fix suggestions</li>
+          <li class="off"><span class="feat-icon off">✕</span> AI-powered fix suggestions</li>
+          <li class="off"><span class="feat-icon off">✕</span> Lighthouse report</li>
+          <li class="off"><span class="feat-icon off">✕</span> Export (JSON / PDF)</li>
+          <li class="off"><span class="feat-icon off">✕</span> Live preview fixes</li>
+        </ul>
+        <a href="../demo.html" class="cta-btn outline">Get Started Free</a>
+      </div>
+
+      <!-- Pro -->
+      <div class="card popular" data-plan="pro">
+        <div class="popular-ribbon">Most Popular</div>
+        <div class="plan-label">Pro</div>
+        <div class="price-row">
+          <div class="price-amount" id="priceAmountPro">$19</div>
+          <div class="price-per" id="pricePerPro">/ mo</div>
+        </div>
+        <div class="plan-tagline">For developers who ship accessible products fast.</div>
+        <div class="divider"></div>
+        <ul class="features-list">
+          <li><span class="feat-icon on">✓</span> Unlimited scans</li>
+          <li><span class="feat-icon on">✓</span> axe-core WCAG 2.2 audit</li>
+          <li><span class="feat-icon on">✓</span> Mobile + tablet + desktop</li>
+          <li><span class="feat-icon on">✓</span> AI-powered fix suggestions</li>
+          <li><span class="feat-icon on">✓</span> Lighthouse report</li>
+          <li><span class="feat-icon on">✓</span> Export (JSON / PDF)</li>
+          <li><span class="feat-icon on">✓</span> Live preview fixes</li>
+          <li><span class="feat-icon on">✓</span> Priority support</li>
+        </ul>
+        <button class="cta-btn solid" id="btnRequestDemo">Request a Pro Demo</button>
+      </div>
+
+    </div>
+
+    <!-- Trust signals -->
+    <div class="trust-row">
+      <div class="trust-item"><span>🔒</span> No credit card to start</div>
+      <div class="trust-item"><span>⚡</span> Instant setup</div>
+      <div class="trust-item"><span>🛡️</span> Data stays in your browser</div>
+    </div>
+
+    <!-- Compare table — Free vs Pro only -->
+    <section class="compare-section">
+      <div class="section-title">Compare plans</div>
+      <div class="section-sub">Full feature breakdown across both tiers</div>
+      <table class="compare-table" aria-label="Plan comparison">
+        <thead>
+          <tr>
+            <th>Feature</th>
+            <th>Free</th>
+            <th class="col-pro">Pro</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>Scans per day</td><td><span class="val">3</span></td><td><span class="val">∞</span></td></tr>
+          <tr><td>axe-core WCAG 2.2 audit</td><td><span class="check">✓</span></td><td><span class="check">✓</span></td></tr>
+          <tr><td>Multi-breakpoint scans</td><td><span class="check">✓</span></td><td><span class="check">✓</span></td></tr>
+          <tr><td>AI-powered fix suggestions</td><td><span class="cross">—</span></td><td><span class="check">✓</span></td></tr>
+          <tr><td>Lighthouse report</td><td><span class="cross">—</span></td><td><span class="check">✓</span></td></tr>
+          <tr><td>Export (JSON / PDF)</td><td><span class="cross">—</span></td><td><span class="check">✓</span></td></tr>
+          <tr><td>Live preview fixes</td><td><span class="cross">—</span></td><td><span class="check">✓</span></td></tr>
+          <tr><td>Custom WCAG rule sets</td><td><span class="cross">—</span></td><td><span class="check">✓</span></td></tr>
+          <tr><td>Priority support</td><td><span class="cross">—</span></td><td><span class="check">✓</span></td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- FAQ -->
+    <section class="faq-section">
+      <div class="section-title">Common questions</div>
+      <div class="section-sub" style="margin-bottom:32px">Everything you need to know</div>
+
+      <details class="faq-item">
+        <summary>Is there a free trial for paid plans? <span class="faq-chevron">+</span></summary>
+        <p>No, we don't offer a free trial period. However, you can <strong>request a free Pro demo</strong> and our team will walk you through all the Pro features with a hands-on session. Click "Request a Pro Demo" above to get started.</p>
+      </details>
+      <details class="faq-item">
+        <summary>What counts as a "scan"? <span class="faq-chevron">+</span></summary>
+        <p>One scan = one URL analysed across all viewport sizes (mobile 375px, tablet 768px, desktop 1280px) with Playwright + axe-core. Full WCAG report, screenshots, and AI suggestions are generated per scan.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Can I cancel at any time? <span class="faq-chevron">+</span></summary>
+        <p>Absolutely. Cancel anytime from your account page. You keep access until the end of your current billing period — no questions asked.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Do you support self-hosted / on-premise? <span class="faq-chevron">+</span></summary>
+        <p>The orchestrator is open-source and can be self-hosted. Reach out for enterprise licensing if you need a managed on-premise deployment with SLA guarantees.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Does data leave my browser? <span class="faq-chevron">+</span></summary>
+        <p>The Chrome extension runs axe-core entirely in-browser — no page data is sent anywhere. The orchestrator (when used) processes URLs server-side but does not store page content beyond your session.</p>
+      </details>
+    </section>
+
+  </div>
+
+  <!-- Demo Request Modal -->
+  <div class="modal-backdrop" id="demoModal">
+    <div class="modal">
+      <button class="modal-close" id="modalClose" aria-label="Close">✕</button>
+
+      <!-- Form -->
+      <div id="demoForm">
+        <h2>Request a Pro Demo</h2>
+        <p class="modal-sub">Tell us a bit about yourself and we'll set up a personalised walkthrough of all Pro features.</p>
+
+        <div class="form-group">
+          <label for="companyName">Company Name</label>
+          <input type="text" id="companyName" placeholder="e.g. Acme Corp" autocomplete="organization" maxlength="100" />
+          <div class="form-error" id="companyError"></div>
+        </div>
+        <div class="form-group">
+          <label for="workEmail">Work Email</label>
+          <input type="email" id="workEmail" placeholder="you@company.com" autocomplete="email" maxlength="254" />
+          <div class="form-error" id="emailError"></div>
+        </div>
+
+        <button class="modal-submit" id="btnSubmitDemo">Request Demo</button>
+      </div>
+
+      <!-- Success state (hidden by default) -->
+      <div id="demoSuccess" style="display:none">
+        <div class="modal-success">
+          <div class="success-icon">✅</div>
+          <h3>Demo Requested!</h3>
+          <p>Thank you — our team will contact you shortly at the email you provided.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <footer class="footer">
+    <div class="footer-inner">
+      <p>© <strong>SiteScope 360</strong> — Accessibility-first developer tooling.</p>
+    </div>
+  </footer>
+
+  <script>
+    // ── Billing toggle (Pro only) ──
+    const btnMonthly = document.getElementById('btnMonthly');
+    const btnAnnual  = document.getElementById('btnAnnual');
+
+    function applyBilling(annual) {
+      document.getElementById('priceAmountPro').textContent = annual ? '$15' : '$19';
+      document.getElementById('pricePerPro').textContent    = annual ? '/ mo · billed yearly' : '/ mo';
+    }
+
+    btnMonthly.addEventListener('click', () => { btnMonthly.classList.add('active'); btnAnnual.classList.remove('active'); applyBilling(false); });
+    btnAnnual.addEventListener('click',  () => { btnAnnual.classList.add('active');  btnMonthly.classList.remove('active'); applyBilling(true); });
+
+    // ── Highlight plan from ?plan= query param ──
+    const params = new URLSearchParams(window.location.search);
+    const planParam = params.get('plan');
+    if (planParam) {
+      const card = document.querySelector('.card[data-plan="' + planParam + '"]');
+      if (card) {
+        card.classList.add('ring');
+        setTimeout(() => card.scrollIntoView({ behavior: 'smooth', block: 'center' }), 120);
+      }
+    }
+
+    // ── Demo Request Modal ──
+    const modal      = document.getElementById('demoModal');
+    const modalClose = document.getElementById('modalClose');
+    const formDiv    = document.getElementById('demoForm');
+    const successDiv = document.getElementById('demoSuccess');
+    const btnRequest = document.getElementById('btnRequestDemo');
+    const btnSubmit  = document.getElementById('btnSubmitDemo');
+    const companyIn  = document.getElementById('companyName');
+    const emailIn    = document.getElementById('workEmail');
+    const companyErr = document.getElementById('companyError');
+    const emailErr   = document.getElementById('emailError');
+
+    // Open modal
+    btnRequest.addEventListener('click', () => {
+      formDiv.style.display = '';
+      successDiv.style.display = 'none';
+      companyIn.value = '';
+      emailIn.value = '';
+      clearErrors();
+      modal.classList.add('open');
+      companyIn.focus();
+    });
+
+    // Close modal
+    modalClose.addEventListener('click', closeModal);
+    modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && modal.classList.contains('open')) closeModal(); });
+
+    function closeModal() { modal.classList.remove('open'); }
+
+    // ── Sanitization ──
+    function sanitize(str) {
+      return str.replace(/[<>"'&]/g, (c) => ({
+        '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;', '&': '&amp;'
+      })[c]).trim();
+    }
+
+    // ── Validation ──
+    function validateCompany(val) {
+      const clean = val.trim();
+      if (!clean) return 'Company name is required.';
+      if (clean.length < 2) return 'Company name must be at least 2 characters.';
+      if (clean.length > 100) return 'Company name must be under 100 characters.';
+      if (!/^[a-zA-Z0-9\s\-.'&,]+$/.test(clean)) return 'Company name contains invalid characters.';
+      return '';
+    }
+
+    function validateEmail(val) {
+      const clean = val.trim();
+      if (!clean) return 'Work email is required.';
+      const emailRe = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
+      if (!emailRe.test(clean)) return 'Please enter a valid email address.';
+      const domain = clean.split('@')[1]?.toLowerCase();
+      const blocked = ['gmail.com','yahoo.com','hotmail.com','outlook.com','aol.com','icloud.com','mail.com','protonmail.com','yandex.com','zoho.com','gmx.com','live.com'];
+      if (blocked.includes(domain)) return 'Please use a work email address (not ' + domain + ').';
+      if (clean.length > 254) return 'Email is too long.';
+      return '';
+    }
+
+    function clearErrors() {
+      companyErr.textContent = '';
+      emailErr.textContent = '';
+      companyIn.classList.remove('invalid', 'valid');
+      emailIn.classList.remove('invalid', 'valid');
+    }
+
+    // Live validation on blur
+    companyIn.addEventListener('blur', () => {
+      const err = validateCompany(companyIn.value);
+      companyErr.textContent = err;
+      companyIn.classList.toggle('invalid', !!err);
+      companyIn.classList.toggle('valid', !err && companyIn.value.trim().length > 0);
+    });
+    emailIn.addEventListener('blur', () => {
+      const err = validateEmail(emailIn.value);
+      emailErr.textContent = err;
+      emailIn.classList.toggle('invalid', !!err);
+      emailIn.classList.toggle('valid', !err && emailIn.value.trim().length > 0);
+    });
+
+    // Submit
+    btnSubmit.addEventListener('click', () => {
+      const companyError = validateCompany(companyIn.value);
+      const emailError   = validateEmail(emailIn.value);
+
+      companyErr.textContent = companyError;
+      emailErr.textContent   = emailError;
+      companyIn.classList.toggle('invalid', !!companyError);
+      emailIn.classList.toggle('invalid', !!emailError);
+      companyIn.classList.toggle('valid', !companyError);
+      emailIn.classList.toggle('valid', !emailError);
+
+      if (companyError || emailError) {
+        if (companyError) companyIn.focus();
+        else emailIn.focus();
+        return;
+      }
+
+      // All valid — sanitize values
+      const company = sanitize(companyIn.value);
+      const email   = sanitize(emailIn.value);
+
+      // TODO: POST to backend API when ready
+      console.log('[Demo Request]', { company, email });
+
+      // Show success
+      btnSubmit.disabled = true;
+      btnSubmit.textContent = 'Submitting…';
+
+      setTimeout(() => {
+        formDiv.style.display = 'none';
+        successDiv.style.display = '';
+        btnSubmit.disabled = false;
+        btnSubmit.textContent = 'Request Demo';
+      }, 600);
+    });
+
+    // Allow Enter key to submit
+    [companyIn, emailIn].forEach(input => {
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          btnSubmit.click();
+        }
+      });
+    });
+  </script>
+</body>
+</html>

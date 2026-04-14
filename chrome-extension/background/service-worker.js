@@ -44,6 +44,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     'apply-patch':        () => sendToTab(msg.tabId, { type: 'apply-patch', change: msg.change, patchId: msg.change.id || `patch-${Date.now()}` }),
     'undo-patch':         () => sendToTab(msg.tabId, { type: 'undo-patch', patchId: msg.patchId }),
     'reset-patches':      () => sendToTab(msg.tabId, { type: 'reset-patches' }),
+    'verify-patches':     () => handleVerifyPatches(msg.tabId),
+    'analyze-all':        () => handleAnalyzeAll(msg.issues, msg.pageUrl, msg.designInfo, msg.tabId),
   };
 
   const handler = handlers[msg.action];
@@ -359,8 +361,8 @@ async function handleScan(tabId) {
   // Step 6: Store in history
   await storeHistoryEntry(tabId, analysis, scanResult);
 
-  // Step 7: Highlight issues on the page via content script
-  await sendToTab(tabId, { type: 'highlight-issues', issues: analysis.issues });
+  // Step 7: Highlights are sent by the popup directly after it receives the analysis,
+  // so we skip sending them here to avoid accumulating duplicate markers on the page.
 
   return { analysis, scanResult };
 }
@@ -397,8 +399,13 @@ function normalizeAxeResults(raw) {
         html: n.html || '', target: n.target || [],
         failureSummary: n.failureSummary || '', impact: n.impact || 'moderate'
       })),
-      selectors: (v.nodes || []).map(n => n.target?.[0] || '').filter(Boolean),
-      html: (v.nodes || []).map(n => n.html || '').filter(Boolean).slice(0, 5),
+      selectors: (v.nodes || []).map(n => {
+        const t = n.target?.[0];
+        // axe target can be a nested array for shadow DOM: [['host', 'inner-el']]
+        // join with ' ' to form a compound selector string
+        return Array.isArray(t) ? t.join(' ') : (t || '');
+      }).filter(Boolean),
+      html: (v.nodes || []).map(n => n.html || '').filter(Boolean),
       elementCount: v.nodes?.length || 0
     };
   }
@@ -567,12 +574,68 @@ async function doLighthouseFetch(url) {
 
     const json = await response.json();
     const cats = json.lighthouseResult?.categories || {};
+    const audits = json.lighthouseResult?.audits || {};
+
+    // Extract Core Web Vitals and key metrics
+    const metrics = {};
+    const metricKeys = [
+      'first-contentful-paint', 'largest-contentful-paint', 'total-blocking-time',
+      'cumulative-layout-shift', 'speed-index', 'interactive',
+      'server-response-time', 'first-meaningful-paint', 'max-potential-fid',
+      'render-blocking-resources', 'uses-responsive-images', 'offscreen-images',
+      'unminified-css', 'unminified-javascript', 'unused-css-rules', 'unused-javascript',
+      'uses-optimized-images', 'uses-webp-images', 'uses-text-compression',
+      'uses-rel-preconnect', 'font-display', 'dom-size', 'redirects',
+      'network-requests', 'total-byte-weight', 'bootup-time', 'mainthread-work-breakdown',
+      'third-party-summary', 'image-alt', 'document-title', 'html-has-lang',
+      'meta-description', 'link-text', 'crawlable-anchors', 'is-crawlable',
+      'robots-txt', 'hreflang', 'canonical', 'structured-data'
+    ];
+    for (const key of metricKeys) {
+      if (audits[key]) {
+        metrics[key] = {
+          id: audits[key].id,
+          title: audits[key].title,
+          description: (audits[key].description || '').replace(/\[.*?\]\(.*?\)/g, '').trim(),
+          score: audits[key].score,
+          displayValue: audits[key].displayValue || '',
+          numericValue: audits[key].numericValue,
+          numericUnit: audits[key].numericUnit || '',
+          scoreDisplayMode: audits[key].scoreDisplayMode || ''
+        };
+      }
+    }
+
+    // Collect all audits grouped by category for diagnostics
+    const diagnostics = [];
+    const passedAudits = [];
+    for (const [id, audit] of Object.entries(audits)) {
+      if (audit.scoreDisplayMode === 'informative' || audit.scoreDisplayMode === 'notApplicable' || audit.scoreDisplayMode === 'manual') continue;
+      const entry = {
+        id: audit.id,
+        title: audit.title,
+        description: (audit.description || '').replace(/\[.*?\]\(.*?\)/g, '').trim(),
+        score: audit.score,
+        displayValue: audit.displayValue || '',
+        scoreDisplayMode: audit.scoreDisplayMode || ''
+      };
+      if (audit.score !== null && audit.score < 1) {
+        diagnostics.push(entry);
+      } else if (audit.score === 1) {
+        passedAudits.push(entry);
+      }
+    }
+    // Sort diagnostics by score ascending (worst first)
+    diagnostics.sort((a, b) => (a.score ?? 0) - (b.score ?? 0));
 
     const data = {
       performance:   Math.round((cats.performance?.score        || 0) * 100),
       accessibility: Math.round((cats.accessibility?.score      || 0) * 100),
       bestPractices: Math.round((cats['best-practices']?.score  || 0) * 100),
       seo:           Math.round((cats.seo?.score                || 0) * 100),
+      metrics,
+      diagnostics,
+      passedAudits,
       fetchedAt:     Date.now()
     };
 
@@ -633,6 +696,84 @@ function getComplianceStatus(score, summary) {
 }
 
 /* ═══════════════════════════════════════════
+   Verify patches — lightweight re-scan (axe only)
+   ═══════════════════════════════════════════ */
+
+async function handleVerifyPatches(tabId) {
+  if (!tabId) {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    tabId = tab?.id;
+    if (!tabId) throw new Error('No active tab found');
+  }
+
+  await ensureContentScripts(tabId);
+
+  // Inject axe-core
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ['lib/axe.min.js'],
+    world: 'MAIN'
+  });
+
+  // Run axe.run() in the MAIN world
+  const [{ result: axeRaw }] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: () => {
+      return new Promise((resolve) => {
+        if (typeof axe === 'undefined') {
+          resolve({ error: 'axe-core not loaded' });
+          return;
+        }
+        // Reset axe internal state to force fresh analysis of patched DOM
+        if (typeof axe.reset === 'function') axe.reset();
+        axe.run(document, {
+          runOnly: {
+            type: 'tag',
+            values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'best-practice']
+          },
+          resultTypes: ['violations', 'passes', 'incomplete'],
+          reporter: 'v2'
+        }).then(results => {
+          resolve({
+            violations: (results.violations || []).map(v => ({
+              id: v.id, impact: v.impact, help: v.help,
+              description: v.description, helpUrl: v.helpUrl, tags: v.tags,
+              nodes: (v.nodes || []).map(n => ({
+                html: n.html, target: n.target,
+                failureSummary: n.failureSummary, impact: n.impact
+              }))
+            })),
+            passes: (results.passes || []).map(p => ({ id: p.id })),
+            incomplete: (results.incomplete || []).map(i => ({
+              id: i.id, impact: i.impact, help: i.help,
+              description: i.description, helpUrl: i.helpUrl, tags: i.tags,
+              nodes: (i.nodes || []).map(n => ({
+                html: n.html, target: n.target,
+                failureSummary: n.failureSummary, impact: n.impact
+              }))
+            })),
+            url: window.location.href,
+            title: document.title,
+            timestamp: new Date().toISOString(),
+            axeVersion: axe.version
+          });
+        }).catch(err => {
+          resolve({ error: err.message || String(err) });
+        });
+      });
+    }
+  });
+
+  if (axeRaw.error) throw new Error(axeRaw.error);
+
+  const scanResult = normalizeAxeResults(axeRaw);
+  const analysis = buildAnalysis(scanResult);
+
+  return { analysis };
+}
+
+/* ═══════════════════════════════════════════
    Fix handler
    ═══════════════════════════════════════════ */
 
@@ -644,7 +785,8 @@ async function handleFix(issue, pageUrl, tabId) {
   const config = {
     privacyMode: settings.privacyMode !== false,  // default: true
     cloudOptIn:  settings.cloudOptIn === true,     // default: false
-    localServerUrl: settings.localServerUrl || 'http://localhost:3000'
+    localServerUrl: settings.localServerUrl || 'http://localhost:3000',
+    geminiApiKey: settings.geminiApiKey || ''      // pass key so Gemini branch activates
   };
 
   // If going to cloud and privacy mode is off, redact via content script
@@ -656,6 +798,23 @@ async function handleFix(issue, pageUrl, tabId) {
 
   const fix = await llmRouter.generateFix(safeIssue, pageUrl, config);
   return { fix };
+}
+
+/**
+ * Full-page analysis — send ALL violations to the LLM in one shot.
+ * Returns fixes for every issue + summary + action plan.
+ */
+async function handleAnalyzeAll(issues, pageUrl, designInfo, tabId) {
+  const settings = await getSettings();
+  const config = {
+    privacyMode: settings.privacyMode !== false,
+    cloudOptIn:  settings.cloudOptIn === true,
+    localServerUrl: settings.localServerUrl || 'http://localhost:3000',
+    geminiApiKey: settings.geminiApiKey || ''
+  };
+
+  const result = await llmRouter.generateFullAnalysis(issues, pageUrl, designInfo, config);
+  return { result };
 }
 
 /* ═══════════════════════════════════════════

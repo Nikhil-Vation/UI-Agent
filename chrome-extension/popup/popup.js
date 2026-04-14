@@ -13,6 +13,7 @@ const els = {
   // Views
   viewMain:     $('#view-main'),
   viewSettings: $('#view-settings'),
+  viewAuth:     $('#view-auth'),
   introHero:    $('#intro-hero'),
   
   // Score
@@ -47,10 +48,11 @@ const els = {
   btnClear:     $('#btn-clear'),
   btnDetect:    $('#btn-detect'),
   
-  // Live Preview Mode
+  // Fix Sandbox
   livePreviewPanel:       $('#live-preview-panel'),
   btnLivePreviewClose:    $('#btn-live-preview-close'),
-  btnDownloadPatch:   $('#btn-download-patch'),
+  btnApplyAllPatches:     $('#btn-apply-all-patches'),
+  btnVerifyScore:         $('#btn-verify-score'),
   btnUndoPatch:       $('#btn-undo-patch'),
   btnResetLivePreview:    $('#btn-reset-live-preview'),
   livePreviewPatchCount:  $('#live-preview-patch-count'),
@@ -88,10 +90,22 @@ const els = {
   checklistLighthouse: $('#checklist-lighthouse'),
   checklistLhScores: $('#checklist-lh-scores'),
 
-  // Lighthouse (real)
-  lighthouseSection: $('#lighthouse-section'),
-  lighthouseScores:  $('#lighthouse-scores'),
-  lhStatus:          $('#lh-status'),
+  // Lighthouse dedicated tab
+  lhTabHeader:       $('#lh-tab-header'),
+  lhTabStatus:       $('#lh-tab-status'),
+  lhTabUrl:          $('#lh-tab-url'),
+  lhTabScores:       $('#lh-tab-scores'),
+  lhTabVitals:       $('#lh-tab-vitals'),
+  lhTabVitalsGrid:   $('#lh-tab-vitals-grid'),
+  lhTabDiagnostics:  $('#lh-tab-diagnostics'),
+  lhTabDiagnosticsList: $('#lh-tab-diagnostics-list'),
+  lhTabPassed:       $('#lh-tab-passed'),
+  lhTabPassedToggle: $('#lh-tab-passed-toggle'),
+  lhTabPassedCount:  $('#lh-tab-passed-count'),
+  lhTabPassedList:   $('#lh-tab-passed-list'),
+  lhTabEmpty:        $('#lh-tab-empty'),
+  lhTabLoading:      $('#lh-tab-loading'),
+  lhTabLoadingHint:  $('#lh-tab-loading-hint'),
   
   // Settings
   settingPrivacy:       $('#setting-privacy'),
@@ -163,6 +177,306 @@ const PAGE_LEVEL_RULES = new Set([
   'html-xml-lang-mismatch', 'valid-lang'
 ]);
 
+/* ═══════ Auth / Subscription state ═══════ */
+const AUTH_STORAGE_KEY  = 'ss360_session';
+const USAGE_STORAGE_KEY = 'ss360_usage';
+const AUTH_API_BASE     = 'http://localhost:3000'; // backend endpoint (TODO: replace with real endpoint)
+const CHECKOUT_URLS     = {
+  pro:  'http://localhost:8000/pricing?plan=pro',
+};
+const MANAGE_URL = 'http://localhost:8000/account.html';
+
+/**
+ * Plan capability matrix.
+ * scansPerDay: Infinity = unlimited
+ */
+const PLAN_CAPS = {
+  free:  { label: 'Free',  color: '#6b7280', scansPerDay: 3,        ai: false, livePreview: false, lighthouse: false, export: false },
+  pro:   { label: 'Pro',   color: '#8b5cf6', scansPerDay: Infinity, ai: true,  livePreview: true,  lighthouse: true,  export: true  },
+};
+
+let authSession = null;   // { token, user: { email }, plan: 'free'|'pro'|'team', expiresAt }
+let authPlan    = 'free'; // resolved plan shorthand
+
+/* ─── Auth helpers ─── */
+
+async function loadAuthSession() {
+  const result = await chrome.storage.local.get(AUTH_STORAGE_KEY);
+  authSession = result[AUTH_STORAGE_KEY] || null;
+  authPlan = authSession?.plan || 'free';
+  return authSession;
+}
+
+async function saveAuthSession(session) {
+  authSession = session;
+  authPlan = session?.plan || 'free';
+  await chrome.storage.local.set({ [AUTH_STORAGE_KEY]: session });
+}
+
+async function clearAuthSession() {
+  authSession = null;
+  authPlan = 'free';
+  await chrome.storage.local.remove(AUTH_STORAGE_KEY);
+}
+
+/**
+ * Validate token with server. Falls back to cached plan on network failure.
+ * Returns true if valid (or offline with cached plan).
+ */
+async function validateAuthSession() {
+  if (!authSession?.token) return false;
+
+  try {
+    const res = await fetch(`${AUTH_API_BASE}/me`, {
+      method: 'GET',
+      headers: { 'Authorization': `Bearer ${authSession.token}` },
+      signal: AbortSignal.timeout(4000),
+    });
+    if (res.status === 401 || res.status === 403) {
+      // Definitive rejection from server — clear session
+      await clearAuthSession();
+      return false;
+    }
+    if (!res.ok) {
+      // Server error (5xx) or unexpected — trust cached plan, don't logout
+      return !!authSession?.plan;
+    }
+    const data = await res.json();
+    authSession.plan = data.plan || 'free';
+    authPlan = authSession.plan;
+    await saveAuthSession(authSession);
+    return true;
+  } catch {
+    // Network error (server offline / localhost not running) — trust cached plan
+    return !!authSession?.plan;
+  }
+}
+
+/* ─── Usage / rate-limit helpers ─── */
+
+function _todayKey() { return new Date().toISOString().slice(0, 10); }
+
+async function getUsageToday() {
+  const result = await chrome.storage.local.get(USAGE_STORAGE_KEY);
+  const u = result[USAGE_STORAGE_KEY] || {};
+  return u.date === _todayKey() ? (u.scans || 0) : 0;
+}
+
+async function incrementScanUsage() {
+  const result = await chrome.storage.local.get(USAGE_STORAGE_KEY);
+  const u = result[USAGE_STORAGE_KEY] || {};
+  const today = _todayKey();
+  const scans = (u.date === today ? (u.scans || 0) : 0) + 1;
+  await chrome.storage.local.set({ [USAGE_STORAGE_KEY]: { date: today, scans } });
+  return scans;
+}
+
+/**
+ * Check if a scan is allowed for the current plan.
+ * Returns { allowed, scansToday, limit, reason }.
+ */
+async function checkScanAllowed() {
+  const cap = PLAN_CAPS[authPlan] || PLAN_CAPS.free;
+  if (cap.scansPerDay === Infinity) return { allowed: true };
+  const scansToday = await getUsageToday();
+  const allowed = scansToday < cap.scansPerDay;
+  return {
+    allowed,
+    scansToday,
+    limit: cap.scansPerDay,
+    reason: `Free plan: ${scansToday}/${cap.scansPerDay} scans used today. Upgrade to Pro for unlimited.`,
+  };
+}
+
+/**
+ * Feature gate. Shows paywall if user lacks access.
+ * feature: 'ai' | 'livePreview' | 'lighthouse' | 'export'
+ * Returns true if allowed.
+ */
+function requirePlan(feature, featureLabel) {
+  const cap = PLAN_CAPS[authPlan] || PLAN_CAPS.free;
+  if (cap[feature]) return true;
+  showPaywallModal(featureLabel || feature);
+  return false;
+}
+
+/* ─── Auth API calls ─── */
+
+async function apiSignIn(email, password) {
+  try {
+    const res = await fetch(`${AUTH_API_BASE}/signin`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+      signal: AbortSignal.timeout(8000),
+    });
+    const data = await res.json();
+    if (!res.ok) return { ok: false, error: data.error || 'Sign-in failed' };
+    return { ok: true, token: data.token, user: data.user, plan: data.plan || 'free' };
+  } catch {
+    return { ok: false, error: 'Network error — check your connection' };
+  }
+}
+
+async function apiSignUp(email, password) {
+  try {
+    const res = await fetch(`${AUTH_API_BASE}/signup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+      signal: AbortSignal.timeout(8000),
+    });
+    const data = await res.json();
+    if (!res.ok) return { ok: false, error: data.error || 'Sign-up failed' };
+    return { ok: true, token: data.token, user: data.user, plan: data.plan || 'free' };
+  } catch {
+    return { ok: false, error: 'Network error — check your connection' };
+  }
+}
+
+/* ─── Auth UI functions ─── */
+
+function showAuthView() {
+  document.getElementById('view-auth')?.classList.remove('hidden');
+  document.getElementById('view-main')?.classList.add('hidden');
+  document.getElementById('view-settings')?.classList.add('hidden');
+}
+
+function hideAuthView() {
+  document.getElementById('view-auth')?.classList.add('hidden');
+  document.getElementById('view-main')?.classList.remove('hidden');
+}
+
+function updatePlanBadge() {
+  const badge = document.getElementById('plan-badge');
+  const accountBtn = document.getElementById('btn-account');
+  if (!badge) return;
+
+  const cap = PLAN_CAPS[authPlan] || PLAN_CAPS.free;
+  badge.textContent = cap.label;
+  badge.className = `plan-badge plan-badge-${authPlan}`;
+  badge.classList.remove('hidden');
+  accountBtn?.classList.toggle('hidden', !authSession);
+}
+
+function updateDemoTierStyle(sel, plan) {
+  sel.classList.remove('tier-free','tier-pro','tier-team');
+  sel.classList.add(`tier-${plan}`);
+}
+
+function showPaywallModal(featureLabel, extraDesc) {
+  const modal = document.getElementById('paywall-modal');
+  if (!modal) return;
+  const title      = document.getElementById('paywall-title');
+  const ribbonText = document.getElementById('paywall-ribbon-text');
+  const upgradeBtn = document.getElementById('paywall-upgrade-btn');
+  const scanCounter = document.getElementById('paywall-scan-counter');
+  const priceBlock  = document.getElementById('paywall-price-block');
+  const featBlock   = document.getElementById('paywall-features-block');
+
+  if (ribbonText) ribbonText.textContent = 'Pro Feature';
+  if (title) title.textContent = featureLabel ? `Unlock ${featureLabel}` : 'Unlock with Pro';
+  if (upgradeBtn) upgradeBtn.href = CHECKOUT_URLS.pro;
+
+  // Ensure price + features are visible for the standard upsell
+  priceBlock?.classList.remove('hidden');
+  featBlock?.classList.remove('hidden');
+  scanCounter?.classList.add('hidden');
+
+  modal.classList.remove('hidden');
+  modal.focus?.();
+}
+
+async function showScanLimitModal(scansToday, limit) {
+  const modal        = document.getElementById('paywall-modal');
+  if (!modal) return;
+  const title        = document.getElementById('paywall-title');
+  const ribbonText   = document.getElementById('paywall-ribbon-text');
+  const upgradeBtn   = document.getElementById('paywall-upgrade-btn');
+  const scanCounter  = document.getElementById('paywall-scan-counter');
+  const scanUsed     = document.getElementById('paywall-scan-used');
+  const scanFill     = document.getElementById('paywall-scan-fill');
+  const priceBlock   = document.getElementById('paywall-price-block');
+  const featBlock    = document.getElementById('paywall-features-block');
+
+  if (ribbonText) ribbonText.textContent = 'Daily Limit';
+  if (title) title.textContent = `You've used all ${limit} free scans today`;
+  if (upgradeBtn) upgradeBtn.href = CHECKOUT_URLS.pro;
+
+  // Hide price + features — not relevant in limit context
+  priceBlock?.classList.add('hidden');
+  featBlock?.classList.add('hidden');
+
+  if (scanCounter) {
+    scanCounter.classList.remove('hidden');
+    if (scanUsed) scanUsed.textContent = scansToday;
+    document.getElementById('paywall-scan-limit').textContent = limit;
+    if (scanFill) scanFill.style.width = `${Math.min(100, (scansToday / limit) * 100)}%`;
+  }
+
+  modal.classList.remove('hidden');
+}
+
+function closePaywallModal() {
+  document.getElementById('paywall-modal')?.classList.add('hidden');
+}
+
+function showAccountModal() {
+  const modal = document.getElementById('account-modal');
+  if (!modal) return;
+  const emailEl  = document.getElementById('account-modal-title');
+  const planEl   = document.getElementById('account-plan-display');
+  const scanInfo = document.getElementById('account-scan-info');
+  const manageBtn = document.getElementById('account-manage-btn');
+
+  if (emailEl) emailEl.textContent = authSession?.user?.email || 'Your Account';
+  const cap = PLAN_CAPS[authPlan] || PLAN_CAPS.free;
+  if (planEl) planEl.textContent = `Current plan: ${cap.label}`;
+  if (manageBtn) manageBtn.href = MANAGE_URL;
+
+  // Show scan usage for free users
+  getUsageToday().then(scansToday => {
+    if (scanInfo) {
+      if (authPlan === 'free') {
+        scanInfo.textContent = `${scansToday} / ${cap.scansPerDay} scans used today`;
+        scanInfo.classList.remove('hidden');
+      } else {
+        scanInfo.classList.add('hidden');
+      }
+    }
+  });
+
+  modal.classList.remove('hidden');
+}
+
+function closeAccountModal() {
+  document.getElementById('account-modal')?.classList.add('hidden');
+}
+
+/**
+ * Full auth initialisation — called first in DOMContentLoaded.
+ * Returns { loggedIn, plan }.
+ */
+async function initAuth() {
+  const session = await loadAuthSession();
+  if (session) {
+    // Token exists — validate silently in background, don't block UI
+    validateAuthSession().then(valid => {
+      if (!valid) {
+        showAuthView();
+        updatePlanBadge();
+      } else {
+        updatePlanBadge();
+      }
+    });
+    updatePlanBadge();
+    return { loggedIn: true, plan: authPlan };
+  }
+  // No session — free tier, no auth gate (user can continue without login)
+  updatePlanBadge();
+  return { loggedIn: false, plan: 'free' };
+}
+
 /* ═══════ State ═══════ */
 let currentTabId = null;
 let currentAnalysis = null;
@@ -222,14 +536,19 @@ let prefetchDone = 0;
 let livePreviewActive = false;
 const livePreviewPatches = []; // Array of applied patches with undo info
 const LIVE_PREVIEW_CACHE_KEY = 'livePreviewPatches';
+const PATCHED_ISSUES_CACHE_KEY = 'patchedIssueIds';
+const patchedIssueIds = new Set(); // Track which issue IDs have been patched
 
 // Patch types
 const PATCH_TYPE = {
   ATTRIBUTE: 'attribute',
+  REMOVE_ATTRIBUTE: 'remove-attribute',
   CSS: 'css',
   TEXT: 'text',
   REMOVE: 'remove',
-  INSERT: 'insert'
+  INSERT: 'insert',
+  INNER_HTML: 'innerHTML',
+  OUTER_HTML: 'outerHTML'
 };
 
 /* ═══════ Typewriter engine ═══════ */
@@ -294,12 +613,17 @@ function stopTypewriter() {
 /* ═══════ Init ═══════ */
 
 document.addEventListener('DOMContentLoaded', async () => {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  currentTabId = tab?.id;
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    currentTabId = tab?.id;
+
+  // ── Auth init (first, so badge + session are ready before any UI) ──
+  await initAuth();
 
   await loadSettings();
   detectCapabilities();
   bindEvents();
+  bindAuthEvents();
   startTypewriter();
 
   // Clear any expired cache entries
@@ -314,6 +638,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       // If cache is still fresh (< 5 minutes), restore it
       if (age < CACHE_DURATION_MS) {
         currentAnalysis = cached.analysis;
+        
+        // Restore patched issue IDs before rendering (so cards show "Patched")
+        await loadPatchedIssueIds();
+        
         renderResults(currentAnalysis);
         
         // Restore highlights if they were active
@@ -344,8 +672,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       lighthouseData = msg.data;
     }
     els.lhLoadingHint?.classList.add('hidden');
-    renderLighthouseSection();
     renderChecklistLighthouse();
+    renderLighthouseTab();
     upgradeScoreCardWithLighthouse();
   });
 
@@ -361,13 +689,23 @@ document.addEventListener('DOMContentLoaded', async () => {
           // Only render if a scan result is already showing
           if (!els.scoreCard.classList.contains('hidden')) {
             els.lhLoadingHint?.classList.add('hidden');
-            renderLighthouseSection();
             renderChecklistLighthouse();
+            renderLighthouseTab();
             upgradeScoreCardWithLighthouse();
           }
         }
       }
     } catch { /* no cached data, that's fine */ }
+  }
+  } catch (initErr) {
+    console.error('[Popup] Init error:', initErr);
+    // Show a minimal error so the popup isn't blank
+    const errEl = document.getElementById('error');
+    const errTxt = document.getElementById('error-text');
+    if (errEl && errTxt) {
+      errTxt.textContent = 'Failed to initialise extension. Try reloading.';
+      errEl.classList.remove('hidden');
+    }
   }
 });
 
@@ -386,11 +724,26 @@ function bindEvents() {
     if (e.target === els.fixModal) closeFixModal();
   });
 
-  // Live Preview controls
+  // Fix Sandbox controls
   els.btnLivePreviewClose.addEventListener('click', closeLivePreview);
-  els.btnDownloadPatch.addEventListener('click', downloadPatch);
+  els.btnApplyAllPatches.addEventListener('click', applyAllPatches);
+  els.btnVerifyScore.addEventListener('click', verifyPatchedScore);
   els.btnUndoPatch.addEventListener('click', undoLastPatch);
   els.btnResetLivePreview.addEventListener('click', resetLivePreview);
+
+  // Demo tier select — changes authPlan for UI preview purposes
+  const demoTierSel = document.getElementById('demo-tier-select');
+  if (demoTierSel) {
+    // Sync initial value
+    demoTierSel.value = authPlan || 'free';
+    updateDemoTierStyle(demoTierSel, demoTierSel.value);
+    demoTierSel.addEventListener('change', () => {
+      authPlan = demoTierSel.value;
+      updateDemoTierStyle(demoTierSel, authPlan);
+      updatePlanBadge();
+      refreshTabPaywalls();
+    });
+  }
 
   // Tab switching
   $$('.tab-btn').forEach(btn => {
@@ -407,21 +760,15 @@ function bindEvents() {
     card.addEventListener('click', () => handleExport(card.dataset.export));
   });
 
-  // Lighthouse button - switch to Insights tab and scroll to Lighthouse section
+  // Lighthouse button - switch to dedicated Lighthouse tab
   els.btnLighthouse?.addEventListener('click', () => {
     if (!currentAnalysis?.issues) {
       showToast('Run a scan first to see Lighthouse scores');
       return;
     }
-    switchTab('tips');
-    // renderTips() is called synchronously by switchTab('tips'),
-    // which calls renderLighthouseSection() making the section visible.
-    // Use requestAnimationFrame to scroll after the DOM update.
-    requestAnimationFrame(() => {
-      if (els.lighthouseSection) {
-        els.lighthouseSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }
-    });
+    // ── Pro gate ──
+    if (!requirePlan('lighthouse', 'Lighthouse')) return;
+    switchTab('lighthouse');
   });
 
   // Score info toggle
@@ -456,6 +803,135 @@ function bindEvents() {
   });
 }
 
+/* ═══════ Auth event binding ═══════ */
+
+function bindAuthEvents() {
+  // Auth tab switcher (Sign In / Sign Up)
+  $$('[data-auth-tab]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tab = btn.dataset.authTab;
+      $$('[data-auth-tab]').forEach(b => {
+        b.classList.toggle('active', b.dataset.authTab === tab);
+        b.setAttribute('aria-selected', b.dataset.authTab === tab ? 'true' : 'false');
+      });
+      document.getElementById('auth-form-signin')?.classList.toggle('hidden', tab !== 'signin');
+      document.getElementById('auth-form-signup')?.classList.toggle('hidden', tab !== 'signup');
+      document.getElementById('auth-error-signin')?.classList.add('hidden');
+      document.getElementById('auth-error-signup')?.classList.add('hidden');
+    });
+  });
+
+  // Password visibility toggles
+  $$('.auth-pw-toggle').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const input = btn.previousElementSibling;
+      if (!input) return;
+      input.type = input.type === 'password' ? 'text' : 'password';
+      btn.textContent = input.type === 'password' ? '👁' : '🙈';
+    });
+  });
+
+  // Sign In form submit
+  document.getElementById('auth-form-signin')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const email    = document.getElementById('auth-email-signin')?.value.trim();
+    const password = document.getElementById('auth-password-signin')?.value;
+    const errEl    = document.getElementById('auth-error-signin');
+    const submitBtn = document.getElementById('btn-signin');
+    if (!email || !password) return;
+    setAuthLoading(submitBtn, true);
+    if (errEl) errEl.classList.add('hidden');
+
+    const result = await apiSignIn(email, password);
+    setAuthLoading(submitBtn, false);
+
+    if (!result.ok) {
+      if (errEl) { errEl.textContent = result.error; errEl.classList.remove('hidden'); }
+      return;
+    }
+    await saveAuthSession({ token: result.token, user: result.user, plan: result.plan });
+    updatePlanBadge();
+    hideAuthView();
+    showToast(`Welcome back, ${result.user?.email || 'user'}! 🎉`);
+  });
+
+  // Sign Up form submit
+  document.getElementById('auth-form-signup')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const email    = document.getElementById('auth-email-signup')?.value.trim();
+    const password = document.getElementById('auth-password-signup')?.value;
+    const errEl    = document.getElementById('auth-error-signup');
+    const submitBtn = document.getElementById('btn-signup');
+    if (!email || !password) return;
+    if (password.length < 8) {
+      if (errEl) { errEl.textContent = 'Password must be at least 8 characters'; errEl.classList.remove('hidden'); }
+      return;
+    }
+    setAuthLoading(submitBtn, true);
+    if (errEl) errEl.classList.add('hidden');
+
+    const result = await apiSignUp(email, password);
+    setAuthLoading(submitBtn, false);
+
+    if (!result.ok) {
+      if (errEl) { errEl.textContent = result.error; errEl.classList.remove('hidden'); }
+      return;
+    }
+    await saveAuthSession({ token: result.token, user: result.user, plan: result.plan || 'free' });
+    updatePlanBadge();
+    hideAuthView();
+    showToast(`Account created! Welcome to SiteScope 360 🎉`);
+  });
+
+  // Continue free
+  document.getElementById('btn-continue-free')?.addEventListener('click', () => {
+    hideAuthView();
+    showToast('Using free tier — 3 scans/day');
+  });
+
+  // Account button (header)
+  document.getElementById('btn-account')?.addEventListener('click', showAccountModal);
+
+  // Account modal close
+  document.getElementById('account-modal-close')?.addEventListener('click', closeAccountModal);
+  document.getElementById('account-modal')?.addEventListener('click', (e) => {
+    if (e.target === document.getElementById('account-modal')) closeAccountModal();
+  });
+
+  // Sign Out
+  document.getElementById('btn-logout')?.addEventListener('click', async () => {
+    await clearAuthSession();
+    closeAccountModal();
+    updatePlanBadge();
+    showToast('Signed out');
+    // Don't force auth view — let them keep using free tier
+  });
+
+  // Paywall modal close
+  document.getElementById('paywall-close')?.addEventListener('click', closePaywallModal);
+  document.getElementById('paywall-dismiss')?.addEventListener('click', closePaywallModal);
+  document.getElementById('paywall-modal')?.addEventListener('click', (e) => {
+    if (e.target === document.getElementById('paywall-modal')) closePaywallModal();
+  });
+
+  // Upgrade plan buttons (open checkout in new tab)
+  document.getElementById('btn-upgrade-pro')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    chrome.tabs.create({ url: CHECKOUT_URLS.pro });
+  });
+  // team plan removed — only Free and Pro
+}
+
+/** Show/hide loading spinner on an auth submit button */
+function setAuthLoading(btn, loading) {
+  if (!btn) return;
+  const text    = btn.querySelector('.auth-btn-text');
+  const spinner = btn.querySelector('.auth-btn-spinner');
+  btn.disabled = loading;
+  text?.classList.toggle('hidden', loading);
+  spinner?.classList.toggle('hidden', !loading);
+}
+
 /* ═══════ Tab switching ═══════ */
 
 function switchTab(tabName) {
@@ -466,7 +942,7 @@ function switchTab(tabName) {
   const isIssues = tabName === 'issues';
   els.quickActions.classList.toggle('hidden', !isIssues);
   els.filterBar.classList.toggle('hidden', !isIssues);
-  
+
   // Hide live preview panel when switching away from issues tab
   if (!isIssues && livePreviewActive) {
     els.livePreviewPanel.classList.add('hidden');
@@ -478,6 +954,47 @@ function switchTab(tabName) {
   if (tabName === 'tips') renderTips();
   if (tabName === 'checklist') renderChecklist();
   if (tabName === 'design') renderDesignTab();
+  if (tabName === 'lighthouse') renderLighthouseTab();
+
+  // Show/hide paywall overlay on pro-gated tabs
+  refreshTabPaywalls();
+}
+
+/**
+ * Insert (or show/hide) blur+pricing-card overlay on pro-gated tabs
+ * based on the current authPlan (or demo tier select value).
+ */
+function refreshTabPaywalls() {
+  const isPro = authPlan === 'pro' || authPlan === 'team';
+  $$('[data-pro-tab]').forEach(tab => {
+    let overlay = tab.querySelector('.tab-paywall-overlay');
+    if (!overlay) {
+      // Build overlay once
+      overlay = document.createElement('div');
+      overlay.className = 'tab-paywall-overlay';
+      overlay.innerHTML = `
+        <div class="overlay-pricing-card">
+          <div class="opc-ribbon">🔒 Pro Feature</div>
+          <div class="opc-title">Unlock with Pro</div>
+          <div class="opc-price">$19 <span>/ mo</span></div>
+          <ul class="opc-features">
+            <li><span class="opc-feat-icon">✓</span> Unlimited scans</li>
+            <li><span class="opc-feat-icon">✓</span> AI-powered fix suggestions</li>
+            <li><span class="opc-feat-icon">✓</span> Technology insights</li>
+            <li><span class="opc-feat-icon">✓</span> Business impact report</li>
+            <li><span class="opc-feat-icon">✓</span> Lighthouse report</li>
+            <li><span class="opc-feat-icon">✓</span> Export (JSON / PDF)</li>
+          </ul>
+          <a class="opc-cta" href="${CHECKOUT_URLS.pro}" target="_blank" rel="noopener">Request a Pro Demo →</a>
+          <button class="opc-dismiss">Maybe later</button>
+        </div>`;
+      overlay.querySelector('.opc-dismiss')?.addEventListener('click', () => {
+        overlay.classList.add('hidden');
+      });
+      tab.appendChild(overlay);
+    }
+    overlay.classList.toggle('hidden', isPro);
+  });
 }
 
 /* ═══════ Design tab ═══════ */
@@ -874,9 +1391,12 @@ function filterIssues(severity) {
 
 async function toggleLivePreview() {
   if (!currentAnalysis?.issues) {
-    showToast('Run a scan first to enable Live Preview Mode');
+    showToast('Run a scan first to enable AI Preview');
     return;
   }
+
+  // ── Pro gate ──
+  if (!requirePlan('livePreview', 'AI Preview')) return;
 
   if (livePreviewActive) {
     closeLivePreview();
@@ -889,54 +1409,49 @@ async function openLivePreview() {
   livePreviewActive = true;
   els.livePreviewPanel.classList.remove('hidden');
   els.btnLivePreview.classList.add('active');
-  els.btnLivePreview.innerHTML = '🧪 Live Preview <span style="font-size:9px;opacity:0.8">ON</span>';
+  els.btnLivePreview.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg> Sandbox <span style="font-size:9px;opacity:0.8">ON</span>';
   
   // Load any existing patches from storage
   await loadLivePreviewPatches();
   updateLivePreviewUI();
   
-  showToast('Live Preview Mode enabled — apply fixes live!');
+  showToast('AI Preview enabled — apply fixes live!');
 }
 
 function closeLivePreview() {
   livePreviewActive = false;
   els.livePreviewPanel.classList.add('hidden');
   els.btnLivePreview.classList.remove('active');
-  els.btnLivePreview.textContent = '🧪 Live Preview';
+  els.btnLivePreview.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg> AI Preview';
 }
 
-async function applyPatch(issue, fix) {
-  if (!livePreviewActive) {
-    console.warn('Live Preview not active');
-    return;
-  }
-
+async function applyPatch(issue, fix, { skipVerify = false } = {}) {
   try {
-    console.log('Applying patch for issue:', issue.id);
-    
     // Convert the fix's before/after code into DOM changes
     const changes = extractDOMChanges(fix, issue);
-    
+
+    console.log(`[applyPatch] ${issue.id}: ${changes.length} changes to apply for ${issue.selectors?.length || 0} affected nodes`);
+    for (const c of changes) {
+      console.log(`  → [${c.type}] selector="${c.selector}" attr=${c.attribute || '-'} val=${(c.value || '').substring(0, 60)}`);
+    }
+
     if (changes.length === 0) {
-      console.warn('No DOM changes extracted from fix');
       showToast('⚠️ Could not extract DOM changes from this fix');
       return;
     }
     
-    console.log('Extracted', changes.length, 'changes:', changes);
-    
-    // Apply each change to the page
+    // Apply each change to the page via content script
+    let anyApplied = false;
+    let failedChanges = 0;
     for (const change of changes) {
-      console.log('Sending apply-patch message:', change);
-      const response = await sendMessage({
-        action: 'apply-patch',
-        tabId: currentTabId,
-        change
+      const response = await sendToContentScript(currentTabId, {
+        type: 'apply-patch',
+        change,
+        patchId: change.id || `patch-${Date.now()}`
       });
-      
-      console.log('Apply patch response:', response);
-      
-      if (response?.ok) {
+
+      if (response?.ok && response.applied > 0) {
+        anyApplied = true;
         livePreviewPatches.push({
           id: `patch-${Date.now()}-${Math.random()}`,
           issueId: issue.id,
@@ -944,9 +1459,18 @@ async function applyPatch(issue, fix) {
           change,
           timestamp: Date.now()
         });
+      } else if (response?.ok && response.applied === 0) {
+        failedChanges++;
+        console.warn(`[applyPatch] Selector matched but 0 elements patched:`, change);
       } else {
-        console.error('Failed to apply patch:', response);
+        failedChanges++;
+        console.warn(`[applyPatch] Patch failed:`, response?.error, change);
       }
+    }
+
+    if (!anyApplied) {
+      showToast('⚠️ Patch could not be applied — selector may not match this page');
+      return;
     }
     
     // Save patches to storage
@@ -954,88 +1478,646 @@ async function applyPatch(issue, fix) {
     updateLivePreviewUI();
     renderPatchList();
     
-    showToast(`✓ Patch applied for: ${issue.title}`);
+    // Mark this issue as patched and update button states
+    patchedIssueIds.add(issue.id);
+    await savePatchedIssueIds();
+    updateSuggestButtonStates();
+
+    // ── Mark patched elements green on the live page ──
+    sendToContentScript(currentTabId, {
+      type: 'mark-patched',
+      selectors: issue.selectors || [],
+      issueNum: String((currentAnalysis?.issues?.indexOf(issue) ?? -1) + 1),
+      issueTitle: issue.title || issue.id
+    }).catch(() => {/* content script may not be injected yet */});
+    
+    const totalChanges = changes.length;
+    const successChanges = totalChanges - failedChanges;
+    const nodeInfo = totalChanges > 1 ? ` (${successChanges}/${totalChanges} elements)` : '';
+    showToast(`✓ Patch applied for: ${issue.title}${nodeInfo}`);
+
+    // Show verify button
+    if (els.btnVerifyScore) els.btnVerifyScore.classList.remove('hidden');
+
+    // Auto-verify score after applying patch (skip during batch apply)
+    if (!skipVerify) {
+      // Small delay to let DOM mutations settle before axe re-scan
+      await new Promise(r => setTimeout(r, 300));
+      await verifyPatchedScore();
+    }
   } catch (err) {
     console.error('Error in applyPatch:', err);
     showToast(`Failed to apply patch: ${err.message}`);
   }
 }
 
-function extractDOMChanges(fix, issue) {
-  const changes = [];
-  
-  // Use the issue's selector to target the element
-  const selector = issue.selectors?.[0] || issue.target?.[0]?.selector;
-  
-  if (!selector) {
-    console.warn('No selector found for issue:', issue);
-    return changes;
+/**
+ * Verify patched score — lightweight re-run of axe on the patched DOM.
+ * Updates the score card in-place so the user can see the improvement.
+ */
+async function verifyPatchedScore() {
+  const btn = els.btnVerifyScore;
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-sm"></span> Verifying…';
   }
-  
-  // Parse the 'after' code to extract attribute changes
+
+  try {
+    const response = await sendMessage({ action: 'verify-patches', tabId: currentTabId });
+
+    if (!response?.ok || !response.analysis) {
+      throw new Error(response?.error || 'Verify failed');
+    }
+
+    const oldScore = currentAnalysis?.auditScore || 0;
+    const newScore = response.analysis.auditScore || 0;
+    const delta = newScore - oldScore;
+
+    // Capture old issue IDs before overwriting currentAnalysis
+    const oldIssueIds = new Set((currentAnalysis?.issues || []).map(i => i.id));
+
+    // Update internal state (keep designInfo from original scan)
+    const designInfo = currentAnalysis?.designInfo || null;
+    currentAnalysis = response.analysis;
+    currentAnalysis.designInfo = designInfo;
+
+    // Animate the score change
+    animateCounter(els.scoreNumber, oldScore, newScore, 600);
+
+    setTimeout(() => {
+      els.scoreArc.setAttribute('stroke-dasharray', `${newScore}, 100`);
+    }, 50);
+
+    // Score color
+    if (newScore >= 90) els.scoreArc.style.stroke = 'var(--green)';
+    else if (newScore >= 70) els.scoreArc.style.stroke = 'var(--orange)';
+    else els.scoreArc.style.stroke = 'var(--red)';
+
+    // Grade
+    const grade = getGrade(newScore);
+    els.scoreGrade.textContent = grade.label;
+    els.scoreGrade.className = `score-grade ${grade.class}`;
+
+    // Summary text
+    const total = response.analysis.totalViolations || 0;
+    const passes = response.analysis.totalPasses || 0;
+    els.scoreSummary.textContent = `${total} issue${total !== 1 ? 's' : ''} found · ${passes} checks passed`;
+
+    // Compliance status
+    const status = response.analysis.complianceStatus || 'Unknown';
+    els.scoreStatus.textContent = status;
+    els.scoreStatus.className = 'score-status ' + status.toLowerCase().replace(/\s+/g, '-');
+
+    // Severity badges
+    const counts = response.analysis.counts || {};
+    els.badgeCritical.textContent = `${counts.critical || 0} Critical`;
+    els.badgeSerious.textContent = `${counts.serious || 0} Serious`;
+    els.badgeModerate.textContent = `${counts.moderate || 0} Moderate`;
+    els.badgeMinor.textContent = `${counts.minor || 0} Minor`;
+
+    // Score breakdown
+    renderScoreBreakdown(newScore, null);
+
+    // ── Re-render the issue list with the updated analysis ──
+    // Compare old issues vs new to find which were resolved
+    const newIssueIds = new Set((response.analysis.issues || []).map(i => i.id));
+    const resolvedIds = [...oldIssueIds].filter(id => !newIssueIds.has(id));
+
+    // Re-render issue list from the fresh analysis
+    const newIssues = currentAnalysis.issues || [];
+    els.issueCount.textContent = `(${newIssues.length})`;
+    els.issuesList.innerHTML = '';
+    if (newIssues.length === 0) {
+      els.issuesList.innerHTML = `
+        <li class="no-issues">
+          <div class="no-issues-icon">${SVG.checkCircle}</div>
+          <div class="no-issues-text">All Issues Fixed!</div>
+          <div class="no-issues-sub">No accessibility issues remaining</div>
+        </li>`;
+      launchConfetti();
+    } else {
+      newIssues.forEach((issue, idx) => {
+        els.issuesList.appendChild(createIssueCard(issue, idx));
+      });
+    }
+
+    // Show improvement toast
+    const resolvedMsg = resolvedIds.length > 0 ? ` · ${resolvedIds.length} issue${resolvedIds.length !== 1 ? 's' : ''} resolved` : '';
+    if (delta > 0) {
+      showToast(`🎉 Score improved: ${oldScore} → ${newScore} (+${delta})${resolvedMsg}`);
+    } else if (delta === 0 && resolvedIds.length > 0) {
+      showToast(`Score ${newScore}${resolvedMsg}`);
+    } else if (delta === 0) {
+      showToast(`Score unchanged at ${newScore}. Try applying more fixes.`);
+    } else {
+      showToast(`Score: ${oldScore} → ${newScore} (${delta})${resolvedMsg}`);
+    }
+
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Verify Score`;
+    }
+  } catch (err) {
+    console.error('Verify failed:', err);
+    showToast(`Verify failed: ${err.message}`);
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Verify Score`;
+    }
+  }
+}
+
+function extractDOMChanges(fix, issue) {
+  const ruleId = issue.id || '';
+
+  // ── Collect ALL selectors for this violation ──
+  // Each violation rule can affect multiple DOM nodes; we must patch every one
+  // so axe removes the entire rule on re-scan (score only changes when a full
+  // violation rule is cleared, not when individual nodes are fixed).
+  const allSelectors = (issue.selectors || []).filter(Boolean);
+  const allHtml = issue.html || [];
+
+  // Page-level rules often have empty selectors — use a sensible default
+  const pageRuleSelectors = {
+    'html-has-lang': 'html',
+    'html-lang-valid': 'html',
+    'document-title': 'head',
+    'meta-viewport': 'meta[name="viewport"]',
+    'frame-title': 'iframe:not([title])',
+    'bypass': 'body',
+    'landmark-one-main': 'body > div:not([role]):not(header):not(footer):not(nav):not(aside)',
+    'region': 'body',
+    'page-has-heading-one': 'body',
+  };
+
+  // Ensure we have at least one selector
+  if (allSelectors.length === 0) {
+    const fallback = pageRuleSelectors[ruleId] || issue.target?.[0]?.selector;
+    if (fallback) allSelectors.push(fallback);
+  }
+
+  if (allSelectors.length === 0) {
+    console.warn('[extractDOMChanges] No selectors found for issue:', ruleId);
+    return [];
+  }
+
+  // For _patchHint 'insertAdjacent' and 'childRole' (operate on a single parent, not per-node), only apply once.
+  // 'attribute' is intentionally NOT here — each node re-derives its own parent selector.
+  // CSS and insertAdjacentWithAttr apply per-node.
+  const singleShotHints = new Set(['insertAdjacent', 'childRole']);
+
+  // Generate changes for each affected node
+  const allChanges = [];
+  const selectorCount = allSelectors.length;
+
+  for (let nodeIdx = 0; nodeIdx < Math.max(selectorCount, 1); nodeIdx++) {
+    let selector = allSelectors[nodeIdx] || allSelectors[0];
+
+    // Fix up page-level selectors
+    if (!selector || selector === 'html') {
+      selector = pageRuleSelectors[ruleId] || selector;
+    }
+    if (!selector) continue;
+
+    // For single-shot hints (page-level inserts, CSS), only generate once
+    if (nodeIdx > 0 && fix._patchHint && singleShotHints.has(fix._patchHint)) break;
+    // insertAdjacentWithAttr: insert once but set attrs on all nodes
+    // (handled inside the _patchHint block below)
+
+    // Use the per-node HTML if available, otherwise fall back to fix.before/after
+    const nodeHtml = allHtml[nodeIdx] || '';
+
+    const changes = _extractDOMChangesForNode(fix, issue, ruleId, selector, nodeHtml, nodeIdx, selectorCount);
+    allChanges.push(...changes);
+  }
+
+  console.log(`[extractDOMChanges] ${ruleId}: ${allChanges.length} total changes for ${selectorCount} node(s)`, allChanges);
+  return allChanges;
+}
+
+/**
+ * Extract DOM changes for a single node (selector) within a violation.
+ * Called once per affected element to ensure all nodes get patched.
+ */
+function _extractDOMChangesForNode(fix, issue, ruleId, selector, nodeHtml, nodeIdx, totalNodes) {
+  const changes = [];
+
   const afterCode = fix.after || '';
   const beforeCode = fix.before || '';
-  
-  // Extract all attributes from the after code
-  const attrRegex = /(\w+(?:-\w+)*)=["']([^"']+)["']/g;
-  let match;
-  
-  while ((match = attrRegex.exec(afterCode)) !== null) {
-    const [, attrName, attrValue] = match;
-    
-    // Check if this attribute exists in before code with different value
-    const beforeHasAttr = new RegExp(`${attrName}=["'][^"']*["']`).test(beforeCode);
-    const beforeValue = beforeCode.match(new RegExp(`${attrName}=["']([^"']+)["']`))?.[1];
-    
-    // Only add if it's new or changed
-    if (!beforeHasAttr || beforeValue !== attrValue) {
+
+  // ── Priority 0: Use _patchHint from deterministic handlers ──
+  // These have exact instructions on how to apply the fix.
+  // Some are single-shot (insertAdjacent for page-level), others per-node (css, attrs).
+
+  if (fix._patchHint === 'css' && fix._cssChanges) {
+    // CSS changes apply per-node (e.g. color-contrast on each element)
+    for (const cssChange of fix._cssChanges) {
+      changes.push({
+        type: PATCH_TYPE.CSS,
+        selector,
+        property: cssChange.property,
+        value: cssChange.value,
+        id: `${ruleId}-css-${cssChange.property}-n${nodeIdx}-${Date.now()}`
+      });
+    }
+    return changes;
+  }
+
+  if (fix._patchHint === 'insertAdjacent' && fix._insertHTML) {
+    // Page-level inserts (document-title, bypass, h1) — only once (nodeIdx===0)
+    if (nodeIdx === 0) {
+      changes.push({
+        type: 'insertAdjacent',
+        selector: fix._insertSelector || selector,
+        position: fix._insertPosition || 'beforebegin',
+        value: fix._insertHTML,
+        id: `${ruleId}-insert-${Date.now()}`
+      });
+    }
+    return changes;
+  }
+
+  if (fix._patchHint === 'insertAdjacentWithAttr') {
+    // For rules like 'label' and 'select-name', each node needs its own insert.
+    // Re-derive per-node attribute values and insert HTML.
+    if (fix._attrChanges) {
+      for (const ac of fix._attrChanges) {
+        // For 'id' attribute, make it unique per node
+        let attrValue = ac.value;
+        if (ac.attribute === 'id' && nodeIdx > 0) {
+          attrValue = `${ac.value}-${nodeIdx + 1}`;
+        }
+        changes.push({
+          type: PATCH_TYPE.ATTRIBUTE,
+          selector,
+          attribute: ac.attribute,
+          value: attrValue,
+          id: `${ruleId}-attr-${ac.attribute}-n${nodeIdx}-${Date.now()}`
+        });
+      }
+    }
+    // Insert adjacent HTML for EACH node (e.g. each input needs its own <label>)
+    if (fix._insertHTML) {
+      let insertHTML = fix._insertHTML;
+      // Update the 'for' attribute in the label to match the per-node id
+      if (nodeIdx > 0 && fix._attrChanges?.some(ac => ac.attribute === 'id')) {
+        const idChange = fix._attrChanges.find(ac => ac.attribute === 'id');
+        const newId = `${idChange.value}-${nodeIdx + 1}`;
+        insertHTML = insertHTML.replace(/for="[^"]*"/, `for="${newId}"`);
+        // Also derive a better label from the node's HTML if available
+        if (nodeHtml) {
+          const nameMatch = nodeHtml.match(/name\s*=\s*["']([^"']*)["']/i);
+          if (nameMatch) {
+            const labelText = nameMatch[1].replace(/[-_]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).trim();
+            insertHTML = insertHTML.replace(/>([^<]*)<\/label>/i, `>${labelText}</label>`);
+          }
+        }
+      }
+      changes.push({
+        type: 'insertAdjacent',
+        selector,
+        position: fix._insertPosition || 'beforebegin',
+        value: insertHTML,
+        id: `${ruleId}-insert-n${nodeIdx}-${Date.now()}`
+      });
+    }
+    return changes;
+  }
+
+  // Handle _patchHint: 'childRole' — add role to direct children of parent
+  if (fix._patchHint === 'childRole' && fix._parentSelector && fix._childRole) {
+    if (nodeIdx === 0) {
+      changes.push({
+        type: 'childRole',
+        selector: fix._parentSelector,
+        childRole: fix._childRole,
+        id: `${ruleId}-childRole-${Date.now()}`
+      });
+    }
+    return changes;
+  }
+
+  // Handle _patchHint: 'attribute' — each node derives its own target selector
+  if (fix._patchHint === 'attribute' && fix._fallbackAttr) {
+    // _fallbackSelector is computed from node 0's selector in the LLM router.
+    // For nodes beyond the first, re-derive the parent selector from THIS node's selector
+    // so every li gets its own parent container patched (not just node 0's parent).
+    let targetSel;
+    if (nodeIdx === 0) {
+      // Use the pre-computed fallback, guarding against empty result
+      targetSel = fix._fallbackSelector || selector;
+    } else {
+      // Re-derive parent selector from this node's selector using the same strip logic
+      targetSel = selector
+        ? (selector.replace(/ ?[>+~] ?li[^,]*$/i, '').replace(/ li[^,]*$/i, '').trim() || selector)
+        : selector;
+    }
+    changes.push({
+      type: PATCH_TYPE.ATTRIBUTE,
+      selector: targetSel,
+      attribute: fix._fallbackAttr,
+      value: fix._fallbackValue || '',
+      id: `${ruleId}-fallback-${fix._fallbackAttr}-n${nodeIdx}-${Date.now()}`
+    });
+    return changes;
+  }
+
+  // Skip fixes that are CSS comments, multi-line HTML restructuring, or empty
+  if (!afterCode || afterCode.startsWith('/*') || afterCode.startsWith('<!--')) {
+    console.log('[extractDOMChanges] Skipping non-applicable after code:', afterCode.substring(0, 80));
+    return changes;
+  }
+
+  // ── Multi-node strategy: For nodes beyond the first, re-derive the fix ──
+  // The fix.before/after are for the FIRST node. For subsequent nodes, we know
+  // WHAT attribute changed (from diffing before/after), and apply the same
+  // attribute change to each node's selector directly.
+  // This is critical: axe won't clear a violation rule until ALL nodes are fixed.
+
+  // Helper: extract attr pattern from the original fix (what changed)
+  const _inferAttrPatternFromFix = () => {
+    const parseA = (html) => {
+      const map = {};
+      const re = /([\w-]+)\s*=\s*["']([^"']*)["']/g;
+      let m;
+      while ((m = re.exec(html)) !== null) map[m[1].toLowerCase()] = m[2];
+      return map;
+    };
+    const bAttrs = parseA(beforeCode);
+    const aAttrs = parseA(afterCode);
+    const diffs = [];
+    for (const [attr, val] of Object.entries(aAttrs)) {
+      if (bAttrs[attr] !== val) diffs.push({ attr, val, isNew: !(attr in bAttrs), removed: false });
+    }
+    // Also detect attributes present in before but absent in after (removals)
+    for (const attr of Object.keys(bAttrs)) {
+      if (!(attr in aAttrs)) diffs.push({ attr, val: null, isNew: false, removed: true });
+    }
+    return diffs;
+  };
+
+  // For nodes 1+, apply inferred attribute pattern directly (much more reliable)
+  if (nodeIdx > 0) {
+    const patterns = _inferAttrPatternFromFix();
+    if (patterns.length > 0) {
+      for (const p of patterns) {
+        // Handle REMOVED attributes (e.g. aria-allowed-role strips the role attr)
+        if (p.removed) {
+          changes.push({
+            type: PATCH_TYPE.REMOVE_ATTRIBUTE,
+            selector,
+            attribute: p.attr,
+            id: `${ruleId}-rm-${p.attr}-n${nodeIdx}-${Date.now()}`
+          });
+          continue;
+        }
+        // For dynamic values (like alt text derived from filename), re-derive from this node
+        let value = p.val;
+        if (p.attr === 'alt' && nodeHtml) {
+          const srcMatch = nodeHtml.match(/src\s*=\s*["']([^"']*)["']/i);
+          if (srcMatch) {
+            const filename = srcMatch[1].split('/').pop()?.split('?')[0] || '';
+            if (filename) {
+              value = filename.replace(/[-_]+/g, ' ').replace(/\.\w+$/, '').replace(/\b\w/g, c => c.toUpperCase()).trim();
+            }
+          }
+        }
+        if (p.attr === 'aria-label' && nodeHtml) {
+          // For landmark-unique: each node needs a DISTINCT aria-label.
+          // Derive from its id, class, or selector index so landmarks don't share the same label.
+          const idMatch = nodeHtml.match(/\bid\s*=\s*["']([^"']+)["']/i);
+          const clsMatch = nodeHtml.match(/\bclass\s*=\s*["']([^"']+)["']/i);
+          const humanise = s => s.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).trim();
+          if (idMatch) {
+            value = humanise(idMatch[1]);
+          } else if (clsMatch) {
+            value = humanise(clsMatch[1].split(/\s+/)[0]);
+          } else {
+            // Fallback: append the node index so at least the labels differ
+            value = `${p.val} ${nodeIdx + 1}`;
+          }
+        }
+        changes.push({
+          type: PATCH_TYPE.ATTRIBUTE,
+          selector,
+          attribute: p.attr,
+          value,
+          id: `${ruleId}-${p.attr}-n${nodeIdx}-${Date.now()}`
+        });
+      }
+      if (changes.length > 0) return changes;
+    }
+    // If no attr patterns found, fall through to regular strategies below
+  }
+
+  // ── Strategy 1: Diff attributes between before and after HTML ──
+  // Extract all attr="value" pairs from both, then find what's NEW or CHANGED
+  const parseAttrs = (html) => {
+    const map = {};
+    const re = /([\w-]+)\s*=\s*["']([^"']*)["']/g;
+    let m;
+    while ((m = re.exec(html)) !== null) {
+      const name = m[1].toLowerCase();
+      // Only skip truly non-a11y structural attrs
+      if (['src', 'href', 'action', 'method', 'width', 'height', 'charset'].includes(name)) continue;
+      // Skip event handlers and data-* attrs
+      if (name.startsWith('on') || name.startsWith('data-')) continue;
+      map[name] = m[2];
+    }
+    return map;
+  };
+
+  const beforeAttrs = parseAttrs(beforeCode);
+  const afterAttrs = parseAttrs(afterCode);
+
+  for (const [attr, value] of Object.entries(afterAttrs)) {
+    if (beforeAttrs[attr] !== value) {
       changes.push({
         type: PATCH_TYPE.ATTRIBUTE,
-        selector: selector,
-        attribute: attrName,
-        value: attrValue
+        selector,
+        attribute: attr,
+        value,
+        id: `${ruleId}-${attr}-n${nodeIdx}-${Date.now()}`
       });
     }
   }
-  
-  // If no attributes found, try parsing the explanation text as fallback
+
+  // ── Strategy 1c: Detect REMOVED attributes (present in before, absent in after) ──
+  // Critical for fixes like aria-allowed-role that work by *removing* an invalid attr.
+  for (const [attr] of Object.entries(beforeAttrs)) {
+    if (!(attr in afterAttrs)) {
+      changes.push({
+        type: PATCH_TYPE.REMOVE_ATTRIBUTE,
+        selector,
+        attribute: attr,
+        id: `${ruleId}-rm-${attr}-n${nodeIdx}-${Date.now()}`
+      });
+    }
+  }
+
+  // ── Strategy 1b: Detect inline style changes ──
+  const beforeStyle = beforeCode.match(/style\s*=\s*["']([^"']*)["']/i)?.[1] || '';
+  const afterStyle = afterCode.match(/style\s*=\s*["']([^"']*)["']/i)?.[1] || '';
+  if (afterStyle && afterStyle !== beforeStyle) {
+    // Parse individual CSS properties
+    const parseCSS = (str) => {
+      const map = {};
+      str.split(';').forEach(part => {
+        const [prop, ...vals] = part.split(':');
+        if (prop && vals.length) {
+          const cssProp = prop.trim();
+          // Convert CSS property to camelCase for el.style
+          const jsProp = cssProp.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+          map[jsProp] = vals.join(':').trim();
+        }
+      });
+      return map;
+    };
+    const beforeCSS = parseCSS(beforeStyle);
+    const afterCSS = parseCSS(afterStyle);
+    for (const [prop, val] of Object.entries(afterCSS)) {
+      if (beforeCSS[prop] !== val) {
+        // Only add CSS changes if we didn't already add style as an attribute
+        const alreadyHasStyleAttr = changes.some(c => c.attribute === 'style');
+        if (!alreadyHasStyleAttr) {
+          changes.push({
+            type: PATCH_TYPE.CSS,
+            selector,
+            property: prop,
+            value: val,
+            id: `${ruleId}-css-${prop}-n${nodeIdx}-${Date.now()}`
+          });
+        }
+      }
+    }
+    // Remove the 'style' attribute change if we parsed individual CSS properties
+    const styleAttrIdx = changes.findIndex(c => c.attribute === 'style');
+    const hasCSSChanges = changes.some(c => c.type === PATCH_TYPE.CSS);
+    if (styleAttrIdx !== -1 && hasCSSChanges) {
+      changes.splice(styleAttrIdx, 1);
+    }
+  }
+
+  // ── Strategy 2: If no attr diffs found, look for key accessibility attrs ──
+  //     that appear in afterCode but not in beforeCode
+  if (changes.length === 0) {
+    const a11yAttrs = [
+      'lang', 'alt', 'title', 'role', 'tabindex', 'scope', 'for',
+      'aria-label', 'aria-labelledby', 'aria-describedby', 'aria-hidden',
+      'aria-expanded', 'aria-haspopup', 'aria-controls', 'aria-live',
+      'aria-checked', 'aria-selected', 'aria-pressed', 'aria-required',
+      'aria-invalid', 'aria-disabled', 'aria-level', 'aria-valuenow',
+      'aria-valuemin', 'aria-valuemax', 'aria-roledescription',
+      'aria-current', 'aria-modal', 'aria-busy',
+    ];
+
+    for (const attr of a11yAttrs) {
+      const afterMatch = afterCode.match(new RegExp(`${attr}\\s*=\\s*["']([^"']*)["']`, 'i'));
+      const beforeMatch = beforeCode.match(new RegExp(`${attr}\\s*=\\s*["']([^"']*)["']`, 'i'));
+
+      if (afterMatch && (!beforeMatch || beforeMatch[1] !== afterMatch[1])) {
+        changes.push({
+          type: PATCH_TYPE.ATTRIBUTE,
+          selector,
+          attribute: attr,
+          value: afterMatch[1],
+          id: `${ruleId}-${attr}-n${nodeIdx}-${Date.now()}`
+        });
+      }
+    }
+  }
+
+  // ── Strategy 3: Parse the explanation text as a last resort ──
   if (changes.length === 0) {
     const explanation = fix.explanation || '';
-    
-    // Look for aria-* attributes in explanation
-    const ariaMatch = explanation.match(/(aria-[\w-]+)=["']([^"']+)["']/);
-    if (ariaMatch) {
+    const combined = afterCode + ' ' + explanation;
+
+    const lastResortAttrs = [
+      [/(aria-[\w-]+)\s*=\s*["']([^"']+)["']/i],
+      [/\brole\s*=\s*["']([^"']+)["']/i, 'role'],
+      [/\balt\s*=\s*["']([^"']+)["']/i, 'alt'],
+      [/\blang\s*=\s*["']([^"']+)["']/i, 'lang'],
+      [/\btitle\s*=\s*["']([^"']+)["']/i, 'title'],
+      [/\btabindex\s*=\s*["']([^"']+)["']/i, 'tabindex'],
+      [/\bfor\s*=\s*["']([^"']+)["']/i, 'for'],
+    ];
+
+    for (const [regex, fixedName] of lastResortAttrs) {
+      const m = combined.match(regex);
+      if (m) {
+        const attrName = fixedName || m[1];
+        const attrValue = fixedName ? m[1] : m[2];
+        // Don't duplicate
+        if (!changes.some(c => c.attribute === attrName)) {
+          changes.push({
+            type: PATCH_TYPE.ATTRIBUTE,
+            selector,
+            attribute: attrName,
+            value: attrValue,
+            id: `${ruleId}-${attrName}-n${nodeIdx}-${Date.now()}`
+          });
+        }
+      }
+    }
+  }
+
+  // ── Strategy 4: innerHTML / text-content change ──
+  // If after code has the same root tag but different inner content, patch innerHTML.
+  // Handles: adding visible text to a button/link, changing heading text, etc.
+  // Note: only apply structural changes (innerHTML/outerHTML) for the first node,
+  // since fix.after was generated for node 0's specific HTML.
+  if (changes.length === 0 && afterCode && beforeCode && nodeIdx === 0) {
+    const getInnerHTML = (html) => {
+      const m = html.trim().match(/^<[^>]+>([\s\S]*)<\/[\w]+>\s*$/i);
+      return m ? m[1].trim() : null;
+    };
+    const getRootTag = (html) => {
+      const m = html.trim().match(/^<([\w]+)/i);
+      return m ? m[1].toLowerCase() : null;
+    };
+
+    const beforeTag = getRootTag(beforeCode);
+    const afterTag = getRootTag(afterCode);
+    const beforeInner = getInnerHTML(beforeCode);
+    const afterInner = getInnerHTML(afterCode);
+
+    // Same root tag, inner content changed → inject innerHTML change
+    if (beforeTag && beforeTag === afterTag && afterInner !== null && beforeInner !== afterInner) {
       changes.push({
-        type: PATCH_TYPE.ATTRIBUTE,
-        selector: selector,
-        attribute: ariaMatch[1],
-        value: ariaMatch[2]
+        type: PATCH_TYPE.INNER_HTML,
+        selector,
+        value: afterInner,
+        id: `${ruleId}-innerHTML-n${nodeIdx}-${Date.now()}`
       });
     }
-    
-    // Look for role attribute
-    const roleMatch = explanation.match(/role=["']([^"']+)["']/);
-    if (roleMatch) {
+
+    // Tag name changed (div→section, div→main, etc.) → outerHTML replace
+    if (changes.length === 0 && beforeTag && afterTag && beforeTag !== afterTag) {
       changes.push({
-        type: PATCH_TYPE.ATTRIBUTE,
-        selector: selector,
-        attribute: 'role',
-        value: roleMatch[1]
-      });
-    }
-    
-    // Look for alt attribute
-    const altMatch = explanation.match(/alt=["']([^"']+)["']/);
-    if (altMatch) {
-      changes.push({
-        type: PATCH_TYPE.ATTRIBUTE,
-        selector: selector,
-        attribute: 'alt',
-        value: altMatch[1]
+        type: PATCH_TYPE.OUTER_HTML,
+        selector,
+        value: afterCode.trim(),
+        id: `${ruleId}-outerHTML-tagchange-n${nodeIdx}-${Date.now()}`
       });
     }
   }
-  
+
+  // ── Strategy 5: full outerHTML replace (last resort for structural rewrites) ──
+  // If we have a complete after snippet and still no changes, replace outerHTML.
+  // Only for node 0 — fix.after is specific to the first element.
+  if (changes.length === 0 && nodeIdx === 0 && afterCode && afterCode.trim().startsWith('<')) {
+    // Reject fixes that are clearly CSS comments or placeholders
+    if (!afterCode.trim().startsWith('/*')) {
+      changes.push({
+        type: PATCH_TYPE.OUTER_HTML,
+        selector,
+        value: afterCode.trim(),
+        id: `${ruleId}-outerHTML-n${nodeIdx}-${Date.now()}`
+      });
+    }
+  }
+
+  console.log(`[extractDOMChanges] ${ruleId}: ${changes.length} changes from selector "${selector}"`, changes);
   return changes;
 }
 
@@ -1045,17 +2127,28 @@ async function undoLastPatch() {
   const patch = livePreviewPatches.pop();
   
   try {
-    const response = await sendMessage({
-      action: 'undo-patch',
-      tabId: currentTabId,
+    const response = await sendToContentScript(currentTabId, {
+      type: 'undo-patch',
       patchId: patch.id
     });
     
     if (response?.ok) {
+      // Remove patched state for this issue if no other patches remain for it
+      const undoneIssueId = patch.issueId;
+      const stillPatched = livePreviewPatches.some(p => p.issueId === undoneIssueId);
+      if (!stillPatched && undoneIssueId) {
+        patchedIssueIds.delete(undoneIssueId);
+        await savePatchedIssueIds();
+        updateSuggestButtonStates();
+      }
+      
       await saveLivePreviewPatches();
       updateLivePreviewUI();
       renderPatchList();
       showToast('✓ Patch undone');
+    } else {
+      livePreviewPatches.push(patch);
+      showToast(`Failed to undo: ${response?.error || 'unknown error'}`);
     }
   } catch (err) {
     // Re-add if undo failed
@@ -1072,101 +2165,104 @@ async function resetLivePreview() {
   }
   
   try {
-    const response = await sendMessage({
-      action: 'reset-patches',
-      tabId: currentTabId
+    const response = await sendToContentScript(currentTabId, {
+      type: 'reset-patches'
     });
     
     if (response?.ok) {
       livePreviewPatches.length = 0;
-      await chrome.storage.local.remove(SANDBOX_CACHE_KEY);
+      const key = `${LIVE_PREVIEW_CACHE_KEY}_${currentTabId}`;
+      await chrome.storage.local.remove(key);
       updateLivePreviewUI();
       renderPatchList();
+      
+      // Clear patched state for all issues
+      patchedIssueIds.clear();
+      await savePatchedIssueIds();
+      updateSuggestButtonStates();
+      if (els.btnVerifyScore) els.btnVerifyScore.classList.add('hidden');
+      
       showToast('✓ All patches cleared');
+    } else {
+      showToast(`Failed to reset: ${response?.error || 'unknown error'}`);
     }
   } catch (err) {
     showToast(`Failed to reset: ${err.message}`);
   }
 }
 
-async function downloadPatch() {
-  if (livePreviewPatches.length === 0) {
-    showToast('No patches to download');
+/**
+ * Apply All Patches — batch-apply all AI suggestions at once.
+ * If an issue doesn't have a cached suggestion, generate one on the fly.
+ */
+async function applyAllPatches() {
+  if (!currentAnalysis?.issues?.length) {
+    showToast('No issues to fix');
     return;
   }
   
-  // Generate CSS and JS override files
-  const cssPatches = [];
-  const jsPatches = [];
+  const btn = els.btnApplyAllPatches;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner-sm"></span> Generating & Applying…';
   
-  for (const patch of livePreviewPatches) {
-    const { change } = patch;
+  let applied = 0;
+  let failed = 0;
+  let generated = 0;
+  const issues = currentAnalysis.issues;
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const pageUrl = tab?.url || '';
+  
+  for (const issue of issues) {
+    // Skip already-patched issues
+    if (patchedIssueIds.has(issue.id)) continue;
     
-    if (change.type === PATCH_TYPE.ATTRIBUTE) {
-      // Most attribute changes need JavaScript
-      jsPatches.push(`
-// Fix: ${patch.issueTitle}
-document.querySelectorAll('${change.selector}').forEach(el => {
-  el.setAttribute('${change.attribute}', '${change.value}');
-});`);
-    } else if (change.type === PATCH_TYPE.CSS) {
-      cssPatches.push(`
-/* Fix: ${patch.issueTitle} */
-${change.selector} {
-  ${change.property}: ${change.value};
-}`);
+    let fix = suggestionCache.get(issue.id);
+    
+    // If not cached, generate fix on the fly
+    if (!fix) {
+      try {
+        btn.innerHTML = `<span class="spinner-sm"></span> Fixing ${issue.id}…`;
+        const response = await sendMessage({
+          action: 'fix',
+          issue,
+          pageUrl,
+          tabId: currentTabId
+        });
+        if (response?.ok && response.fix) {
+          fix = response.fix;
+          suggestionCache.set(issue.id, fix);
+          generated++;
+        }
+      } catch { /* continue to next issue */ }
+    }
+    
+    if (!fix) { failed++; continue; }
+    
+    try {
+      await applyPatch(issue, fix, { skipVerify: true });
+      applied++;
+    } catch (err) {
+      console.warn('Apply all — failed for', issue.id, err);
+      failed++;
     }
   }
   
-  // Create downloadable files
-  const timestamp = new Date().toISOString().slice(0, 10);
+  btn.innerHTML = `${SVG.checkCircle} ${applied} Applied!`;
+  setTimeout(() => {
+    btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Apply All Patches`;
+    btn.disabled = suggestionCache.size === 0;
+  }, 2500);
   
-  if (cssPatches.length > 0) {
-    const cssContent = `/* SiteScope 360 Accessibility Patches
- * Generated: ${new Date().toLocaleString()}
- * Total patches: ${cssPatches.length}
- */\n${cssPatches.join('\n')}`;
-    
-    downloadFile(`accessibility-fixes-${timestamp}.css`, cssContent, 'text/css');
-  }
-  
-  if (jsPatches.length > 0) {
-    const jsContent = `/* SiteScope 360 Accessibility Patches
- * Generated: ${new Date().toLocaleString()}
- * Total patches: ${jsPatches.length}
- */
+  const msg = failed > 0 
+    ? `✓ Applied ${applied} patches (${failed} failed)${generated > 0 ? ` — ${generated} generated on-the-fly` : ''}`
+    : `✓ Applied ${applied} patches to page${generated > 0 ? ` (${generated} generated on-the-fly)` : ''}`;
+  showToast(msg);
 
-(function() {
-  'use strict';
-  
-  // Wait for DOM to be ready
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', applyPatches);
-  } else {
-    applyPatches();
+  // Auto-verify score after batch apply — wait for DOM mutations to settle
+  if (applied > 0) {
+    updateSuggestButtonStates();
+    setTimeout(() => verifyPatchedScore(), 800);
   }
-  
-  function applyPatches() {
-${jsPatches.join('\n')}
-  }
-})();`;
-    
-    downloadFile(`accessibility-fixes-${timestamp}.js`, jsContent, 'text/javascript');
-  }
-  
-  showToast(`✓ Downloaded ${cssPatches.length + jsPatches.length} patch file(s)`);
-}
-
-function downloadFile(filename, content, mimeType) {
-  const blob = new Blob([content], { type: mimeType });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
 }
 
 function updateLivePreviewUI() {
@@ -1176,9 +2272,12 @@ function updateLivePreviewUI() {
   els.livePreviewPatchCount.textContent = patchCount;
   els.livePreviewDomCount.textContent = domCount;
   
-  els.btnDownloadPatch.disabled = patchCount === 0;
   els.btnUndoPatch.disabled = patchCount === 0;
   els.btnResetLivePreview.disabled = patchCount === 0;
+  
+  // Apply All is enabled when there are cached suggestions not yet applied
+  const unappliedCount = [...suggestionCache.keys()].filter(id => !patchedIssueIds.has(id)).length;
+  els.btnApplyAllPatches.disabled = unappliedCount === 0;
 }
 
 function renderPatchList() {
@@ -1194,7 +2293,9 @@ function renderPatchList() {
         <div class="sandbox-patch-title">${escapeHtml(patch.issueTitle)}</div>
         <div class="sandbox-patch-meta">${patch.change.type} · ${patch.change.selector || 'global'}</div>
       </div>
-      <button class="sandbox-patch-remove" data-idx="${idx}" title="Remove this patch">✕</button>
+      <button class="sandbox-patch-remove" data-idx="${idx}" title="Remove this patch" aria-label="Remove patch">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
     </div>
   `).join('');
   
@@ -1237,13 +2338,41 @@ async function loadLivePreviewPatches() {
     // Re-apply patches to DOM after reload
     for (const patch of cached.patches) {
       if (patch.change) {
-        await sendMessage({
-          action: 'apply-patch',
-          tabId: currentTabId,
-          change: patch.change
+        await sendToContentScript(currentTabId, {
+          type: 'apply-patch',
+          change: patch.change,
+          patchId: patch.id
         });
       }
     }
+  }
+}
+
+/**
+ * Persist patched issue IDs per tab so they survive across rescans.
+ */
+async function savePatchedIssueIds() {
+  const key = `${PATCHED_ISSUES_CACHE_KEY}_${currentTabId}`;
+  await chrome.storage.local.set({
+    [key]: {
+      tabId: currentTabId,
+      ids: [...patchedIssueIds],
+      timestamp: Date.now()
+    }
+  });
+}
+
+/**
+ * Load patched issue IDs from storage (called on popup open and after rescan).
+ */
+async function loadPatchedIssueIds() {
+  const key = `${PATCHED_ISSUES_CACHE_KEY}_${currentTabId}`;
+  const result = await chrome.storage.local.get(key);
+  const cached = result[key];
+  
+  if (cached && cached.tabId === currentTabId && cached.ids) {
+    patchedIssueIds.clear();
+    cached.ids.forEach(id => patchedIssueIds.add(id));
   }
 }
 
@@ -1254,6 +2383,15 @@ async function handleScan() {
     showError('No active tab found');
     return;
   }
+
+  // ── Scan rate-limit gate (free plan) ──
+  const scanCheck = await checkScanAllowed();
+  if (!scanCheck.allowed) {
+    await showScanLimitModal(scanCheck.scansToday, scanCheck.limit);
+    return;
+  }
+  // Count this scan
+  await incrementScanUsage();
 
   // Dismiss intro hero with smooth animation
   if (els.introHero && !els.introHero.classList.contains('hidden')) {
@@ -1277,16 +2415,28 @@ async function handleScan() {
   els.scoreAttribution.classList.add('hidden');
   els.lhLoadingHint.classList.add('hidden');
   clearTimeout(_breakdownAutoTimer);
-  _breakdownUserTouched = false;
   els.badges.classList.add('hidden');
   els.tabBar.classList.add('hidden');
   els.quickActions.classList.add('hidden');
   els.filterBar.classList.add('hidden');
+  if (els.btnVerifyScore) els.btnVerifyScore.classList.add('hidden');
   updatePrefetchStatus('hide');
 
   // Fake progress bar
   scanStartTime = Date.now();
   animateProgress();
+
+  // ── Clear stale patch state from any previous session ──
+  // A fresh scan is always a clean slate — the page is scanned as-is.
+  // If the user previously applied patches they can re-apply after the scan.
+  livePreviewPatches.length = 0;
+  patchedIssueIds.clear();
+  await Promise.all([
+    saveLivePreviewPatches(),
+    savePatchedIssueIds()
+  ]);
+  updateLivePreviewUI();
+  renderPatchList();
 
   try {
     const response = await sendMessage({ action: 'scan', tabId: currentTabId });
@@ -1299,9 +2449,9 @@ async function handleScan() {
     const duration = ((Date.now() - scanStartTime) / 1000).toFixed(1);
     currentAnalysis._scanDuration = duration;
 
-    // The service worker auto-highlights issues during scan (step 7),
-    // so mark highlights as active in the popup
-    highlightsActive = true;
+    // Actively highlight issues on the page (don't rely on service worker step 7)
+    highlightsActive = false; // will be set to true by toggleHighlights
+    await toggleHighlights();
 
     // Cache the scan results for this tab (persistent storage)
     await setScanCache(currentTabId, {
@@ -1314,7 +2464,11 @@ async function handleScan() {
     saveToHistory(response.analysis);
 
     // Pre-fetch code suggestions in background so they're ready instantly
-    suggestionCache.clear();
+    // Keep suggestion cache entries for issues that still exist after rescan
+    const newIssueIds = new Set(response.analysis.issues.map(i => i.id));
+    for (const key of suggestionCache.keys()) {
+      if (!newIssueIds.has(key)) suggestionCache.delete(key);
+    }
     prefetchSuggestions();
 
     // Fetch real Lighthouse scores in parallel (non-blocking)
@@ -1372,8 +2526,9 @@ function renderResults(analysis) {
   els.scoreSource.title = 'Score from axe-core engine — Lighthouse score loading…';
   els.scoreSource.classList.remove('hidden');
 
-  // Info button + initial breakdown
-  els.scoreInfoBtn.classList.remove('hidden');
+  // Info button + initial breakdown — reset to full chip (unseen) on every new scan
+  els.scoreInfoBtn.classList.remove('hidden', 'seen', 'active');
+  els.scoreInfoBtn.setAttribute('aria-expanded', 'false');
   renderScoreBreakdown(score, null);
 
   // Always-visible attribution — Lighthouse loads silently in background
@@ -1395,9 +2550,6 @@ function renderResults(analysis) {
   }
 
   els.scoreCard.classList.remove('hidden');
-
-  // Auto-open breakdown for 5s so users see the scores immediately
-  setTimeout(() => autoOpenScoreBreakdown(), 300);
 
   // Severity badges
   const counts = analysis.counts || {};
@@ -1483,37 +2635,14 @@ function getGrade(score) {
 
 /* Auto-collapse timer handle — cancelled if user manually toggles */
 let _breakdownAutoTimer = null;
-/* Track whether user manually interacted with the panel */
-let _breakdownUserTouched = false;
-
-/**
- * Open the breakdown panel, start a 5-second auto-collapse unless the
- * user has already manually interacted with it this session.
- */
-function autoOpenScoreBreakdown() {
-  _breakdownUserTouched = false;
-  clearTimeout(_breakdownAutoTimer);
-
-  const panel = els.scoreBreakdown;
-  panel.classList.remove('hidden');
-  void panel.offsetHeight; // force reflow
-  panel.classList.add('expanded');
-  els.scoreCard.classList.add('breakdown-open');
-  els.scoreInfoBtn.classList.add('active');
-
-  _breakdownAutoTimer = setTimeout(() => {
-    if (!_breakdownUserTouched) {
-      panel.classList.remove('expanded');
-      els.scoreCard.classList.remove('breakdown-open');
-      els.scoreInfoBtn.classList.remove('active');
-    }
-  }, 5000);
-}
 
 function toggleScoreBreakdown() {
-  // User manually toggled — cancel auto-collapse and lock open/closed
-  _breakdownUserTouched = true;
   clearTimeout(_breakdownAutoTimer);
+
+  // After first click: collapse chip to icon-only (hide label + pulse dot)
+  els.scoreInfoBtn.classList.add('seen');
+  els.scoreInfoBtn.setAttribute('aria-expanded',
+    els.scoreBreakdown.classList.contains('expanded') ? 'false' : 'true');
 
   const panel = els.scoreBreakdown;
   const isOpen = panel.classList.contains('expanded');
@@ -1551,6 +2680,10 @@ function createIssueCard(issue, idx) {
   const li = document.createElement('li');
   li.className = 'issue-card';
   li.setAttribute('role', 'listitem');
+  li.dataset.issueId = issue.id;
+
+  // Pre-stamp patched state if already known
+  if (patchedIssueIds.has(issue.id)) li.classList.add('patched');
 
   const severity = (issue.severity || 'moderate').toLowerCase();
   const wcagTags = (issue.wcag || []).slice(0, 2);
@@ -1577,7 +2710,7 @@ function createIssueCard(issue, idx) {
       </div>
       <div class="issue-actions">
         <button class="issue-btn locate-btn" data-selector="${escapeAttr(issue.selectors?.[0] || '')}" data-issue-num="${idx + 1}" title="Locate on page">${SVG.locate}</button>
-        <button class="issue-btn fix-btn" data-idx="${idx}" title="Get AI code suggestion">${SVG.suggest} Suggest</button>
+        <button class="issue-btn fix-btn${patchedIssueIds.has(issue.id) ? ' patched' : ''}" data-idx="${idx}" title="Get AI code suggestion">${patchedIssueIds.has(issue.id) ? SVG.checkCircle + ' Patched' : SVG.suggest + ' Suggest'}</button>
       </div>
     </div>
     <div class="issue-detail">
@@ -1601,7 +2734,7 @@ function createIssueCard(issue, idx) {
       li.classList.add('spotlit');
       const selector = issue.selectors?.[0];
       if (selector) {
-        sendMessage({ action: 'spotlight', tabId: currentTabId, selector });
+        sendToContentScript(currentTabId, { type: 'spotlight', selector });
       }
     }
   });
@@ -1610,9 +2743,16 @@ function createIssueCard(issue, idx) {
   const locateBtn = li.querySelector('.locate-btn');
   locateBtn.addEventListener('click', (e) => {
     e.stopPropagation();
+    if (isPageLevel) {
+      // Show/toggle page-level banner instead of scrolling
+      sendToContentScript(currentTabId, { type: 'show-page-banner' });
+      li.classList.add('locating');
+      setTimeout(() => li.classList.remove('locating'), 1500);
+      return;
+    }
     const selector = locateBtn.dataset.selector;
     if (selector) {
-      sendMessage({ action: 'scroll-to', tabId: currentTabId, selector });
+      sendToContentScript(currentTabId, { type: 'scroll-to', selector });
       // Flash the card to confirm
       li.classList.add('locating');
       setTimeout(() => li.classList.remove('locating'), 1500);
@@ -1631,12 +2771,20 @@ function createIssueCard(issue, idx) {
 /* ═══════ Fix handler ═══════ */
 
 async function handleFix(issue, btn) {
+  // ── Pro gate ──
+  if (!requirePlan('ai', 'AI Suggestions')) return;
+
+  const isPatched = patchedIssueIds.has(issue.id);
+  
   // Check cache first — instant if pre-fetched
   const cached = suggestionCache.get(issue.id);
   if (cached) {
     showFixModal(cached, issue);
-    btn.innerHTML = SVG.checkCircle + ' Ready';
-    setTimeout(() => { btn.innerHTML = SVG.suggest + ' Suggest'; }, 1200);
+    // Don't reset "Patched" buttons — keep their state
+    if (!isPatched) {
+      btn.innerHTML = SVG.checkCircle + ' Ready';
+      setTimeout(() => { btn.innerHTML = SVG.suggest + ' Suggest'; }, 1200);
+    }
     return;
   }
 
@@ -1671,9 +2819,15 @@ async function handleFix(issue, btn) {
   } finally {
     clearInterval(msgInterval);
     btn.classList.remove('loading');
-    btn.innerHTML = suggestionCache.has(issue.id) ? SVG.checkCircle + ' Ready' : SVG.suggest + ' Suggest';
-    if (suggestionCache.has(issue.id)) {
-      setTimeout(() => { btn.innerHTML = SVG.suggest + ' Suggest'; }, 1200);
+    // Preserve "Patched" state if already applied
+    if (isPatched) {
+      btn.innerHTML = SVG.checkCircle + ' Patched';
+      btn.classList.add('patched');
+    } else {
+      btn.innerHTML = suggestionCache.has(issue.id) ? SVG.checkCircle + ' Ready' : SVG.suggest + ' Suggest';
+      if (suggestionCache.has(issue.id)) {
+        setTimeout(() => { btn.innerHTML = SVG.suggest + ' Suggest'; }, 1200);
+      }
     }
   }
 }
@@ -1693,59 +2847,120 @@ async function prefetchSuggestions() {
   prefetchTotal = issues.length;
   prefetchDone = 0;
 
-  // Show status banner
   updatePrefetchStatus('working');
 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const pageUrl = tab?.url || '';
 
-  // Dedup issues by rule ID — same rule gets same suggestion
-  // e.g. 10 images missing alt text all share one LLM call
-  const uniqueRules = new Map(); // ruleId → first issue
-  const ruleOrder = [];          // track order for progress
-  for (const issue of issues) {
-    if (suggestionCache.has(issue.id)) {
-      prefetchDone++;
-      continue;
-    }
-    if (!uniqueRules.has(issue.id)) {
-      uniqueRules.set(issue.id, issue);
-      ruleOrder.push(issue.id);
+  // ── Strategy A: Full-page analysis (one LLM call for everything) ──
+  // Send all violations + page context to Gemini in one shot.
+  // Gemini understands the whole picture, prioritises, and returns fixes for all issues.
+  const uncachedIssues = issues.filter(iss => !suggestionCache.has(iss.id));
+
+  if (uncachedIssues.length > 0) {
+    try {
+      console.log(`[prefetch] Sending ${uncachedIssues.length} issues to LLM for full-page analysis…`);
+      const response = await sendMessage({
+        action: 'analyze-all',
+        issues: uncachedIssues,
+        pageUrl,
+        designInfo: currentAnalysis.designInfo || null,
+        tabId: currentTabId
+      });
+
+      if (response?.ok && response.result?.fixes) {
+        const { fixes, summary, priority, actionPlan } = response.result;
+
+        // Store full-page narrative on analysis for display
+        if (summary)    currentAnalysis.llmSummary    = summary;
+        if (priority)   currentAnalysis.llmPriority   = priority;
+        if (actionPlan) currentAnalysis.llmActionPlan = actionPlan;
+        console.log('[prefetch] LLM full analysis summary:', summary);
+        console.log('[prefetch] LLM priority order:', priority);
+
+        // Cache fix for each issue from the bulk response.
+        // IMPORTANT: Prefer deterministic fixes over Gemini's generic before/after,
+        // because deterministic fixes carry _patchHint metadata (css, attribute,
+        // childRole etc.) that extractDOMChanges relies on to generate changes.
+        // Gemini's before/after is generic HTML that often can't be parsed.
+        for (const issue of issues) {
+          if (suggestionCache.has(issue.id)) continue;
+
+          // 1. Try the deterministic path first (instant, has _patchHint metadata)
+          let bestFix = null;
+          try {
+            const detResp = await sendMessage({ action: 'fix', issue, pageUrl, tabId: currentTabId });
+            if (detResp?.ok && detResp.fix && detResp.fix.confidence >= 0.7) {
+              bestFix = detResp.fix;
+            }
+          } catch { /* ignore — fall through to Gemini fix */ }
+
+          // 2. Fall back to Gemini's full-analysis fix if deterministic didn't work
+          if (!bestFix) {
+            const geminiFix = fixes[issue.id];
+            if (geminiFix) bestFix = { ...geminiFix, source: 'gemini-full' };
+          }
+
+          if (bestFix) {
+            suggestionCache.set(issue.id, bestFix);
+            prefetchDone++;
+          }
+        }
+
+        updateSuggestButtonStates();
+        if (livePreviewActive) updateLivePreviewUI();
+        console.log(`[prefetch] Full-page analysis cached ${prefetchDone} fixes`);
+      }
+    } catch (e) {
+      console.warn('[prefetch] Full-page analysis failed, falling back to per-issue:', e.message);
     }
   }
 
-  updatePrefetchStatus('working');
+  // ── Strategy B: Per-issue fallback (deterministic or individual LLM calls) ──
+  // For any issues still not cached (full analysis failed or returned no fix for them).
+  const stillUncached = issues.filter(iss => !suggestionCache.has(iss.id));
 
-  // Process unique rules in parallel batches of 4
-  const BATCH_SIZE = 4;
-  for (let i = 0; i < ruleOrder.length; i += BATCH_SIZE) {
-    const batch = ruleOrder.slice(i, i + BATCH_SIZE);
-    const promises = batch.map(async (ruleId) => {
-      const issue = uniqueRules.get(ruleId);
-      try {
-        const response = await sendMessage({
-          action: 'fix',
-          issue,
-          pageUrl,
-          tabId: currentTabId
-        });
-        if (response?.ok && response.fix) {
-          // Cache for ALL issues with this rule ID
-          for (const iss of issues) {
-            if (iss.id === ruleId) {
-              suggestionCache.set(iss.id, response.fix);
+  if (stillUncached.length > 0) {
+    console.log(`[prefetch] Falling back to per-issue for ${stillUncached.length} remaining issues`);
+
+    // Dedup by rule ID
+    const uniqueRules = new Map();
+    const ruleOrder = [];
+    for (const issue of stillUncached) {
+      if (!uniqueRules.has(issue.id)) {
+        uniqueRules.set(issue.id, issue);
+        ruleOrder.push(issue.id);
+      }
+    }
+
+    const BATCH_SIZE = 4;
+    for (let i = 0; i < ruleOrder.length; i += BATCH_SIZE) {
+      const batch = ruleOrder.slice(i, i + BATCH_SIZE);
+      const promises = batch.map(async (ruleId) => {
+        const issue = uniqueRules.get(ruleId);
+        try {
+          const response = await sendMessage({
+            action: 'fix',
+            issue,
+            pageUrl,
+            tabId: currentTabId
+          });
+          if (response?.ok && response.fix) {
+            for (const iss of issues) {
+              if (iss.id === ruleId && !suggestionCache.has(iss.id)) {
+                suggestionCache.set(iss.id, response.fix);
+              }
             }
           }
-        }
-      } catch { /* silent */ }
-      // Count all issues with this rule as done
-      const count = issues.filter(iss => iss.id === ruleId).length;
-      prefetchDone += count;
-      updatePrefetchStatus('working');
-    });
+        } catch { /* silent */ }
+        prefetchDone += issues.filter(iss => iss.id === ruleId).length;
+        updatePrefetchStatus('working');
+      });
 
-    await Promise.all(promises);
-    updateSuggestButtonStates();
+      await Promise.all(promises);
+      updateSuggestButtonStates();
+      if (livePreviewActive) updateLivePreviewUI();
+    }
   }
 
   prefetchInProgress = false;
@@ -1770,11 +2985,25 @@ function updateSuggestButtonStates() {
   document.querySelectorAll('.fix-btn').forEach(btn => {
     const idx = parseInt(btn.dataset.idx, 10);
     const issue = currentAnalysis?.issues?.[idx];
-    if (issue && suggestionCache.has(issue.id) && !btn.classList.contains('loading')) {
+    if (!issue) return;
+    
+    // Priority 1: If this issue has been patched, show permanent "Patched" state
+    if (patchedIssueIds.has(issue.id)) {
+      btn.innerHTML = SVG.checkCircle + ' Patched';
+      btn.classList.add('patched');
+      btn.classList.remove('cached');
+      // Stamp the card itself so the whole row gets the green treatment
+      btn.closest('.issue-card')?.classList.add('patched');
+      return;
+    }
+    
+    // Priority 2: If cached (pre-fetched), briefly flash "Ready" then back to "Suggest"
+    if (suggestionCache.has(issue.id) && !btn.classList.contains('loading')) {
       btn.innerHTML = SVG.checkCircle + ' Ready';
       btn.classList.add('cached');
       setTimeout(() => {
-        if (btn.classList.contains('cached')) {
+        // Don't revert if it got patched in the meantime
+        if (btn.classList.contains('cached') && !patchedIssueIds.has(issue.id)) {
           btn.innerHTML = SVG.suggest + ' Suggest';
         }
       }, 2000);
@@ -1792,13 +3021,13 @@ function showFixModal(fix, issue) {
   const sourceLabel = fix.source || 'unknown';
   const confidence = fix.confidence ? `${Math.round(fix.confidence * 100)}%` : '—';
   
-  // Add "Apply Fix" button if sandbox mode is active
-  const sandboxBtn = livePreviewActive ? `
+  // Apply Fix button — always visible so users can apply patches directly
+  const sandboxBtn = `
     <button class="fix-apply-btn" id="fix-apply">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-      Apply to Page (Live Preview)
+      Apply Fix to Page
     </button>
-  ` : '';
+  `;
   
   els.fixBody.innerHTML = `
     <div class="fix-label">Current Code</div>
@@ -1834,21 +3063,15 @@ function showFixModal(fix, issue) {
     }
   });
   
-  // Live Preview apply button
-  if (livePreviewActive) {
-    const applyBtn = $('#fix-apply');
-    applyBtn?.addEventListener('click', async () => {
-      applyBtn.disabled = true;
-      applyBtn.innerHTML = '<span class="spinner-sm"></span> Applying...';
-      
-      await applyPatch(issue, fix);
-      
-      applyBtn.innerHTML = SVG.checkCircle + ' Applied!';
-      setTimeout(() => {
-        closeFixModal();
-      }, 1000);
-    });
-  }
+  // Apply Fix button
+  const applyBtn = $('#fix-apply');
+  applyBtn?.addEventListener('click', async () => {
+    applyBtn.disabled = true;
+    applyBtn.innerHTML = '<span class="spinner-sm"></span> Applying & Verifying...';
+    await applyPatch(issue, fix);
+    applyBtn.innerHTML = SVG.checkCircle + ' Done!';
+    setTimeout(() => { closeFixModal(); }, 800);
+  });
 
   els.fixModal.classList.remove('hidden');
 }
@@ -1948,6 +3171,9 @@ function handleExport(format) {
     showToast('Run a scan first');
     return;
   }
+
+  // ── Pro gate ──
+  if (!requirePlan('export', 'Export')) return;
 
   switch (format) {
     case 'json':
@@ -2592,7 +3818,6 @@ const GENERAL_SEO_TIPS = [
 function renderTips() {
   if (!currentAnalysis || !currentAnalysis.issues) {
     els.tipsEmpty.classList.remove('hidden');
-    els.lighthouseSection.classList.add('hidden');
     els.quickWins.classList.add('hidden');
     els.seoCrossover.classList.add('hidden');
     els.improvementInsights.classList.add('hidden');
@@ -2608,10 +3833,7 @@ function renderTips() {
   // ── 1. Business Impact Insights (top — most eye-opening) ──
   renderImprovementInsights(issues, score);
 
-  // ── 2. Lighthouse Scores (real or loading) ──
-  renderLighthouseSection();
-
-  // ── 3. Quick Wins ──
+  // ── 2. Quick Wins ──
   renderQuickWins(issues);
 
   // ── 4. SEO Crossover ──
@@ -2630,8 +3852,8 @@ async function fetchLighthouseScores() {
   lighthouseData = null;
 
   // Show skeleton loaders immediately
-  renderLighthouseSection();
   renderChecklistLighthouse();
+  renderLighthouseTab();
 
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -2641,8 +3863,8 @@ async function fetchLighthouseScores() {
         pageUrl.startsWith('about:') || pageUrl.startsWith('file:')) {
       lighthouseLoading = false;
       lighthouseData = { error: 'Cannot analyze internal pages' };
-      renderLighthouseSection();
       renderChecklistLighthouse();
+      renderLighthouseTab();
       return;
     }
 
@@ -2655,8 +3877,8 @@ async function fetchLighthouseScores() {
       lighthouseLoading = false;
       lighthouseData = result.data;
       els.lhLoadingHint?.classList.add('hidden');
-      renderLighthouseSection();
       renderChecklistLighthouse();
+      renderLighthouseTab();
       upgradeScoreCardWithLighthouse();
       return; // done
     }
@@ -2665,8 +3887,8 @@ async function fetchLighthouseScores() {
       lighthouseLoading = false;
       lighthouseData = { error: result.error };
       els.lhLoadingHint?.classList.add('hidden');
-      renderLighthouseSection();
       renderChecklistLighthouse();
+      renderLighthouseTab();
       return;
     }
 
@@ -2683,23 +3905,28 @@ async function fetchLighthouseScores() {
         lighthouseLoading = false;
         lighthouseData = polled.data;
         els.lhLoadingHint?.classList.add('hidden');
-        renderLighthouseSection();
         renderChecklistLighthouse();
+        renderLighthouseTab();
         upgradeScoreCardWithLighthouse();
       } else if (pollCount >= 40) { // 40 × 3s = 2 min max wait
         clearInterval(pollTimer);
         lighthouseLoading = false;
         lighthouseData = { error: 'Timed out waiting for Lighthouse' };
         els.lhLoadingHint?.classList.add('hidden');
-        renderLighthouseSection();
         renderChecklistLighthouse();
+        renderLighthouseTab();
       }
     }, 3000);
 
     // Show "still loading" hint after 30s
     setTimeout(() => {
-      if (lighthouseLoading && els.lhLoadingHint) {
-        els.lhLoadingHint.innerHTML = '<span class="lh-pulse"></span> Still fetching Lighthouse — large pages take longer…';
+      if (lighthouseLoading) {
+        if (els.lhLoadingHint) {
+          els.lhLoadingHint.innerHTML = '<span class="lh-pulse"></span> Still fetching Lighthouse — large pages take longer…';
+        }
+        if (els.lhTabLoadingHint) {
+          els.lhTabLoadingHint.textContent = 'Still fetching — large pages take longer…';
+        }
       }
     }, 30000);
   } catch (e) {
@@ -2707,45 +3934,78 @@ async function fetchLighthouseScores() {
     lighthouseLoading = false;
     lighthouseData = { error: e.message };
     els.lhLoadingHint?.classList.add('hidden');
-    renderLighthouseSection();
     renderChecklistLighthouse();
+    renderLighthouseTab();
   }
 }
 
 /**
  * Render Lighthouse section — skeleton while loading, real data when available
  */
-function renderLighthouseSection() {
-  els.lighthouseSection.classList.remove('hidden');
+/* ═══════ Lighthouse Dedicated Tab ═══════ */
 
+function renderLighthouseTab() {
+  if (!els.lhTabScores) return;
+
+  // Loading state
   if (lighthouseLoading) {
-    // Skeleton loaders
-    els.lhStatus.textContent = 'Loading…';
-    els.lhStatus.className = 'status-pill loading';
-    els.lighthouseScores.innerHTML = buildLighthouseSkeletons();
+    els.lhTabEmpty?.classList.add('hidden');
+    els.lhTabLoading?.classList.remove('hidden');
+    els.lhTabScores.innerHTML = '';
+    els.lhTabVitals?.classList.add('hidden');
+    els.lhTabDiagnostics?.classList.add('hidden');
+    els.lhTabPassed?.classList.add('hidden');
+    els.lhTabStatus.textContent = 'Loading…';
+    els.lhTabStatus.className = 'status-pill loading';
     return;
   }
 
-  if (!lighthouseData || lighthouseData.error) {
-    const errMsg = lighthouseData?.error || 'Could not fetch Lighthouse data';
-    const isRateLimit = errMsg.toLowerCase().includes('rate limit') || errMsg.includes('429');
-    els.lhStatus.textContent = isRateLimit ? 'Rate Limited' : 'Error';
-    els.lhStatus.className = 'status-pill error';
-    els.lighthouseScores.innerHTML = `<div class="lh-error">${escapeHtml(errMsg)}</div>`;
+  els.lhTabLoading?.classList.add('hidden');
+
+  // No data yet
+  if (!lighthouseData) {
+    els.lhTabEmpty?.classList.remove('hidden');
+    els.lhTabScores.innerHTML = '';
+    els.lhTabVitals?.classList.add('hidden');
+    els.lhTabDiagnostics?.classList.add('hidden');
+    els.lhTabPassed?.classList.add('hidden');
     return;
   }
 
-  els.lhStatus.textContent = 'Live';
-  els.lhStatus.className = 'status-pill live';
+  // Error state
+  if (lighthouseData.error) {
+    els.lhTabEmpty?.classList.add('hidden');
+    els.lhTabStatus.textContent = 'Error';
+    els.lhTabStatus.className = 'status-pill error';
+    els.lhTabScores.innerHTML = `<div class="lh-error">${escapeHtml(lighthouseData.error)}</div>`;
+    els.lhTabVitals?.classList.add('hidden');
+    els.lhTabDiagnostics?.classList.add('hidden');
+    els.lhTabPassed?.classList.add('hidden');
+    return;
+  }
 
+  // Success — render full report
+  els.lhTabEmpty?.classList.add('hidden');
+  els.lhTabStatus.textContent = 'Live';
+  els.lhTabStatus.className = 'status-pill live';
+
+  // Show the URL being analyzed
+  if (els.lhTabUrl && currentAnalysis?.url) {
+    try {
+      const u = new URL(currentAnalysis.url);
+      els.lhTabUrl.textContent = u.hostname + u.pathname;
+    } catch { els.lhTabUrl.textContent = currentAnalysis.url || ''; }
+  }
+
+  // ── Category score rings ──
   const scores = [
-    { label: 'Performance', score: lighthouseData.performance },
-    { label: 'Accessibility', score: lighthouseData.accessibility },
-    { label: 'Best Practices', score: lighthouseData.bestPractices },
-    { label: 'SEO', score: lighthouseData.seo },
+    { label: 'Performance', score: lighthouseData.performance, icon: '⚡' },
+    { label: 'Accessibility', score: lighthouseData.accessibility, icon: '♿' },
+    { label: 'Best Practices', score: lighthouseData.bestPractices, icon: '✅' },
+    { label: 'SEO', score: lighthouseData.seo, icon: '🔍' },
   ];
 
-  els.lighthouseScores.innerHTML = scores.map((s, i) => {
+  els.lhTabScores.innerHTML = scores.map((s, i) => {
     const colorClass = s.score >= 90 ? 'green' : s.score >= 50 ? 'orange' : 'red';
     return `
       <div class="lh-score-card" style="animation-delay:${i * 0.08}s">
@@ -2756,29 +4016,128 @@ function renderLighthouseSection() {
           </svg>
           <span class="lh-ring-number">${s.score}</span>
         </div>
-        <div class="lh-score-label">${s.label}</div>
+        <div class="lh-score-label">${s.icon} ${s.label}</div>
       </div>
     `;
   }).join('');
 
-  // Animate rings after render
+  // Animate rings
   setTimeout(() => {
-    els.lighthouseScores.querySelectorAll('.lh-ring-fg').forEach(ring => {
+    els.lhTabScores.querySelectorAll('.lh-ring-fg').forEach(ring => {
       const score = ring.dataset.score;
       ring.setAttribute('stroke-dasharray', `${score}, 100`);
     });
   }, 50);
+
+  // ── Core Web Vitals ──
+  const m = lighthouseData.metrics || {};
+  const vitals = [
+    { key: 'largest-contentful-paint', label: 'LCP', fullName: 'Largest Contentful Paint', good: 2500, poor: 4000, unit: 'ms' },
+    { key: 'first-contentful-paint', label: 'FCP', fullName: 'First Contentful Paint', good: 1800, poor: 3000, unit: 'ms' },
+    { key: 'total-blocking-time', label: 'TBT', fullName: 'Total Blocking Time', good: 200, poor: 600, unit: 'ms' },
+    { key: 'cumulative-layout-shift', label: 'CLS', fullName: 'Cumulative Layout Shift', good: 0.1, poor: 0.25, unit: '' },
+    { key: 'speed-index', label: 'SI', fullName: 'Speed Index', good: 3400, poor: 5800, unit: 'ms' },
+    { key: 'interactive', label: 'TTI', fullName: 'Time to Interactive', good: 3800, poor: 7300, unit: 'ms' },
+  ];
+
+  const vitalsWithData = vitals.filter(v => m[v.key]);
+  if (vitalsWithData.length > 0) {
+    els.lhTabVitals?.classList.remove('hidden');
+    els.lhTabVitalsGrid.innerHTML = vitalsWithData.map(v => {
+      const metric = m[v.key];
+      const numVal = metric.numericValue;
+      const display = metric.displayValue || (numVal != null ? formatMetricValue(numVal, v.unit) : '—');
+      let rating = 'good';
+      if (numVal != null) {
+        if (numVal > v.poor) rating = 'poor';
+        else if (numVal > v.good) rating = 'needs-improvement';
+      } else if (metric.score != null) {
+        if (metric.score < 0.5) rating = 'poor';
+        else if (metric.score < 0.9) rating = 'needs-improvement';
+      }
+      return `
+        <div class="lh-vital-card ${rating}">
+          <div class="lh-vital-header">
+            <span class="lh-vital-abbr">${v.label}</span>
+            <span class="lh-vital-indicator ${rating}"></span>
+          </div>
+          <div class="lh-vital-value">${display}</div>
+          <div class="lh-vital-name">${v.fullName}</div>
+          <div class="lh-vital-thresholds">
+            <span class="lh-threshold good">Good: ≤${formatThreshold(v.good, v.unit)}</span>
+            <span class="lh-threshold poor">Poor: &gt;${formatThreshold(v.poor, v.unit)}</span>
+          </div>
+        </div>
+      `;
+    }).join('');
+  } else {
+    els.lhTabVitals?.classList.add('hidden');
+  }
+
+  // ── Diagnostics (failing audits) ──
+  const diags = lighthouseData.diagnostics || [];
+  if (diags.length > 0) {
+    els.lhTabDiagnostics?.classList.remove('hidden');
+    els.lhTabDiagnosticsList.innerHTML = diags.slice(0, 30).map(d => {
+      const scoreColor = d.score === null ? 'neutral' : d.score < 0.5 ? 'fail' : 'warn';
+      const scorePercent = d.score !== null ? Math.round(d.score * 100) : '—';
+      return `
+        <div class="lh-diag-item ${scoreColor}">
+          <div class="lh-diag-icon ${scoreColor}">
+            ${scoreColor === 'fail' ? '✗' : scoreColor === 'warn' ? '△' : '—'}
+          </div>
+          <div class="lh-diag-content">
+            <div class="lh-diag-title">${escapeHtml(d.title)}</div>
+            ${d.displayValue ? `<div class="lh-diag-value">${escapeHtml(d.displayValue)}</div>` : ''}
+            ${d.description ? `<div class="lh-diag-desc">${escapeHtml(d.description).substring(0, 120)}</div>` : ''}
+          </div>
+          <div class="lh-diag-score ${scoreColor}">${scorePercent}${typeof scorePercent === 'number' ? '%' : ''}</div>
+        </div>
+      `;
+    }).join('');
+  } else {
+    els.lhTabDiagnostics?.classList.add('hidden');
+  }
+
+  // ── Passed audits (collapsible) ──
+  const passed = lighthouseData.passedAudits || [];
+  if (passed.length > 0) {
+    els.lhTabPassed?.classList.remove('hidden');
+    els.lhTabPassedCount.textContent = passed.length;
+    els.lhTabPassedList.innerHTML = passed.map(p => `
+      <div class="lh-passed-item">
+        <span class="lh-passed-check">✓</span>
+        <span class="lh-passed-title">${escapeHtml(p.title)}</span>
+      </div>
+    `).join('');
+
+    // Toggle handler
+    els.lhTabPassedToggle?.addEventListener('click', () => {
+      els.lhTabPassedList.classList.toggle('collapsed');
+      els.lhTabPassedToggle.classList.toggle('expanded');
+    });
+  } else {
+    els.lhTabPassed?.classList.add('hidden');
+  }
 }
 
-function buildLighthouseSkeletons() {
-  return ['Performance', 'Accessibility', 'Best Practices', 'SEO'].map((label, i) => `
-    <div class="lh-score-card skeleton" style="animation-delay:${i * 0.1}s">
-      <div class="lh-score-ring skeleton-ring">
-        <div class="lh-skeleton-circle"></div>
-      </div>
-      <div class="lh-score-label">${label}</div>
-    </div>
-  `).join('');
+function formatMetricValue(value, unit) {
+  if (unit === 'ms') {
+    if (value >= 1000) return (value / 1000).toFixed(1) + ' s';
+    return Math.round(value) + ' ms';
+  }
+  if (typeof value === 'number' && value < 1) {
+    return value.toFixed(3);
+  }
+  return String(value);
+}
+
+function formatThreshold(value, unit) {
+  if (unit === 'ms') {
+    if (value >= 1000) return (value / 1000).toFixed(1) + 's';
+    return value + 'ms';
+  }
+  return String(value);
 }
 
 /**
@@ -2836,11 +4195,6 @@ function upgradeScoreCardWithLighthouse() {
   // Refresh breakdown panel with Lighthouse data
   const axeScore = currentAnalysis?.auditScore || 0;
   renderScoreBreakdown(axeScore, lighthouseData);
-
-  // If panel is already open keep it; if user hasn't touched it, re-open briefly
-  if (!_breakdownUserTouched) {
-    autoOpenScoreBreakdown();
-  }
 
   // Brief flash animation to draw attention to the upgrade
   els.scoreCard.classList.add('score-upgraded');
@@ -3506,56 +4860,44 @@ function launchConfetti() {
 
 async function toggleHighlights() {
   if (!currentAnalysis?.issues) {
-    console.warn('No issues to highlight');
+    showToast('Run a scan first');
     return;
   }
   
   if (highlightsActive) {
     await clearHighlights();
   } else {
-    console.log('Sending highlight message for', currentAnalysis.issues.length, 'issues');
-    const response = await sendMessage({
-      action: 'highlight',
-      tabId: currentTabId,
-      issues: currentAnalysis.issues
+    const issueCount = currentAnalysis.issues.length;
+    console.log('[Popup] toggleHighlights: sending', issueCount, 'issues to tab', currentTabId);
+    if (issueCount === 0) {
+      showToast('No issues to highlight');
+      return;
+    }
+    const response = await sendToContentScript(currentTabId, {
+      type: 'highlight-issues',
+      issues: currentAnalysis.issues.map(i => ({ ...i, isPageLevel: PAGE_LEVEL_RULES.has(i.id) }))
     });
+    console.log('[Popup] Highlight response:', JSON.stringify(response));
     
     if (response?.ok) {
       highlightsActive = true;
-      els.btnHighlight.textContent = '👁️ On';
+      els.btnHighlight.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg> On';
       els.btnHighlight.classList.add('active');
       els.btnHighlight.title = 'Highlights on — click to hide';
-      
-      // Update cache with highlights state
-      if (currentTabId) {
-        const cached = await getCachedScan(currentTabId);
-        if (cached) {
-          cached.highlightsActive = true;
-          await setScanCache(currentTabId, cached);
-        }
-      }
+      showToast(`✅ ${response.highlighted || 0} elements highlighted`);
     } else {
-      console.error('Failed to highlight issues:', response);
-      showToast('❌ Failed to highlight issues');
+      console.error('[Popup] Highlight failed:', response);
+      showToast('❌ Highlight failed: ' + (response?.error || 'unknown'));
     }
   }
 }
 
 async function clearHighlights() {
-  await sendMessage({ action: 'clear-highlights', tabId: currentTabId });
+  await sendToContentScript(currentTabId, { type: 'clear-highlights' });
   highlightsActive = false;
-  els.btnHighlight.textContent = '👁️ Highlight';
+  els.btnHighlight.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg> Highlight';
   els.btnHighlight.classList.remove('active');
   els.btnHighlight.title = 'Highlight issues on page';
-  
-  // Update cache with highlights state
-  if (currentTabId) {
-    const cached = await getCachedScan(currentTabId);
-    if (cached) {
-      cached.highlightsActive = false;
-      await setScanCache(currentTabId, cached);
-    }
-  }
 }
 
 /* ═══════ Settings ═══════ */
@@ -3678,6 +5020,61 @@ function sendMessage(msg) {
       });
     } catch (err) {
       console.error('[Popup] sendMessage threw:', err);
+      resolve({ ok: false, error: err.message });
+    }
+  });
+}
+
+/**
+ * Send a message DIRECTLY to the content script in the active tab.
+ * Bypasses the service worker entirely — popup → content script.
+ * Auto-injects scanner.js if the content script isn't responding.
+ */
+async function sendToContentScript(tabId, message) {
+  if (!tabId) {
+    console.error('[Popup] sendToContentScript: no tabId!');
+    return { ok: false, error: 'No tab ID' };
+  }
+  console.log('[Popup] sendToContentScript:', message.type, 'to tab', tabId);
+
+  // First attempt: try sending directly
+  let response = await _tabSendMessage(tabId, message);
+  console.log('[Popup] First attempt response:', JSON.stringify(response));
+  if (response && response.ok === true) return response;
+
+  // Content script not loaded — inject it
+  console.log('[Popup] Content script not responding, injecting scanner.js...');
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ['content/scanner.js']
+    });
+    // Wait longer for the script to initialize and register its listener
+    await new Promise(r => setTimeout(r, 400));
+  } catch (injectErr) {
+    console.error('[Popup] Failed to inject content script:', injectErr);
+    return { ok: false, error: 'Cannot inject: ' + injectErr.message };
+  }
+
+  // Retry after injection
+  response = await _tabSendMessage(tabId, message);
+  console.log('[Popup] Second attempt response:', JSON.stringify(response));
+  return response;
+}
+
+function _tabSendMessage(tabId, message) {
+  return new Promise((resolve) => {
+    try {
+      chrome.tabs.sendMessage(tabId, message, (response) => {
+        if (chrome.runtime.lastError) {
+          console.warn('[Popup] _tabSendMessage error:', chrome.runtime.lastError.message);
+          resolve({ ok: false, error: chrome.runtime.lastError.message });
+        } else {
+          resolve(response || { ok: false, error: 'No response' });
+        }
+      });
+    } catch (err) {
+      console.error('[Popup] _tabSendMessage threw:', err);
       resolve({ ok: false, error: err.message });
     }
   });

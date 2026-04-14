@@ -238,6 +238,9 @@
       sendResponse({ ok: true, redacted: redactString(msg.text) });
       return false;
     }
+
+    // Unhandled message type — don't call sendResponse, just return false
+    return false;
   });
 
   /* ───────── Also expose on window for direct use ───────── */
