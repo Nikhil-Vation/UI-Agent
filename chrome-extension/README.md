@@ -1,4 +1,4 @@
-# Accea Agent Chrome Extension
+# SiteScope 360 Chrome Extension
 
 > **The only accessibility tool that generates working code fixes privately on your machine.**
 
@@ -10,13 +10,17 @@ Privacy-first accessibility scanner powered by AI. Runs axe-core in your browser
 Page Data ──▶ axe-core scan (in-browser, private)
                     │
                     ▼
+            Deterministic rule engine
+            (~40 rules, no model, free)
+                    │  confidence < 0.7
+                    ▼
               LLM Fix Router
                     │
     ┌───────────────┼───────────────────┐
     │               │                   │
     ▼               ▼                   ▼
-window.ai       localhost           Cloud API
-(On-device)     (Local LLM)         (redacted)
+window.ai       localhost         Cloud provider
+(On-device)     (Local LLM)       (BYO API key)
 🔒 Private      🔒 Private         ☁️ Redacted
     │               │                   │
     └───────────────┼───────────────────┘
@@ -25,7 +29,10 @@ window.ai       localhost           Cloud API
               (rule-based, always works)
 ```
 
-**Your data never leaves your machine** unless you explicitly opt into cloud mode — and even then, PII is stripped first.
+**Privacy Mode is the master switch and defaults to ON.** While it is on, no cloud
+provider is contacted — not even one you have saved an API key for. Turning it off
+enables the cloud tiers, and everything sent is redacted first; if the redactor cannot
+be reached, the element HTML is withheld rather than sent raw.
 
 ## ✨ Features
 
@@ -108,12 +115,18 @@ chrome-extension/
 
 ## 🧠 LLM Backends
 
+Tried in order. The deterministic engine runs **first** and short-circuits the rest
+whenever it is confident (≥ 0.7), so most fixes never reach a model at all.
+
 | Backend | Privacy | Speed | Quality | Requirements |
 |---------|---------|-------|---------|-------------|
+| **Deterministic** | 🔒 Full | ⚡ Instant | ★★★ | Always available — tried first |
 | **On-device AI** | 🔒 Full | ⚡ Fast | ★★★ | Chrome 127+ with AI features |
+| **Cloud provider** | ☁️ Redacted | 🔄 Medium | ★★★★★ | Your own key + Privacy Mode off |
 | **Local LLM** | 🔒 Full | 🔄 Medium | ★★★★ | Any compatible model server |
-| **Cloud API** | ☁️ Redacted | 🔄 Medium | ★★★★★ | Opt-in required |
-| **Deterministic** | 🔒 Full | ⚡ Instant | ★★ | Always available |
+| **Hosted API** | ☁️ Redacted | 🔄 Medium | ★★★★ | Opt-in required |
+
+Supported cloud providers: Gemini, OpenAI, Anthropic, Mistral — all bring-your-own-key.
 
 ## 🛡️ What Gets Redacted
 

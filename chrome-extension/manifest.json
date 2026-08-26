@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "SiteScope 360 — Site Diagnostics & Accessibility",
+  "name": "SiteScope 360 \u2014 Site Diagnostics & Accessibility",
   "version": "1.0.0",
-  "description": "Full-spectrum site diagnostics: accessibility audit, tech stack inspector, design profiler & AI-powered fix suggestions. 100% private — no data leaves your browser.",
+  "description": "Full-spectrum site diagnostics: accessibility audit, tech stack inspector, design profiler & AI-powered fix suggestions. Private by default \u2014 cloud AI is opt-in and redacted.",
   "permissions": [
     "activeTab",
     "scripting",
@@ -11,10 +11,17 @@
   "host_permissions": [
     "http://localhost:3000/*",
     "http://localhost:8000/*",
-    "https://www.googleapis.com/pagespeedonline/*"
+    "https://www.googleapis.com/pagespeedonline/*",
+    "https://generativelanguage.googleapis.com/*",
+    "https://api.openai.com/*",
+    "https://api.anthropic.com/*",
+    "https://api.mistral.ai/*"
   ],
   "optional_host_permissions": [
-    "https://api.accea-agent.com/*"
+    "http://*/*",
+    "https://*/*",
+    "https://api.accea-agent.com/*",
+    "https://api.github.com/*"
   ],
   "action": {
     "default_popup": "popup/popup.html",
@@ -38,15 +45,28 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["lib/axe.min.js"],
-      "matches": ["<all_urls>"]
+      "resources": [
+        "lib/axe.min.js"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
     }
   ],
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["content/scanner.js", "content/redactor.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content/scanner.js",
+        "content/redactor.js"
+      ],
       "run_at": "document_idle"
     }
+  ],
+  "optional_permissions": [
+    "notifications",
+    "tabs"
   ]
 }

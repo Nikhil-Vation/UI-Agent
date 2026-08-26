@@ -1,5 +1,5 @@
 /**
- * Accea Agent Chrome Extension — Service Worker (Background)
+ * SiteScope 360 Chrome Extension — Service Worker (Background)
  * 
  * Coordinates scanning, LLM routing, and messaging between popup
  * and content scripts. This is the central hub.
@@ -12,15 +12,40 @@
  */
 
 import { LLMRouter } from '../lib/llm-router.js';
+import { assessCandidates, summarizeJudgment, collectJudgmentCandidates } from '../lib/judgment.js';
+import { runDomTool } from '../lib/dom-tools.js';
+import '../lib/audit-log.js';   // classic script; attaches globalThis.AuditLog
+import '../lib/crawl.js';       // classic script; attaches globalThis.Crawl
+import '../lib/keyboard.js';    // classic script; attaches globalThis.Keyboard
+import '../lib/screenreader.js';// classic script; attaches globalThis.ScreenReader
+import '../lib/reading-order.js'; // classic script; attaches globalThis.ReadingOrder
+import '../lib/impairment.js';    // classic script; attaches globalThis.Impairment
+import { analyzeScreenshot, describeImageFromVision } from '../lib/vision.js';
+import { runJudgmentNuancePass } from '../lib/judgment-llm.js';
+import { addUsage, formatUSD } from '../lib/cost-meter.js';
+import { buildPrSummary, createAccessibilityPr } from '../lib/github.js';
+import { findBaseline, shouldAmbientScan, detectRegression } from '../lib/ambient.js';
+import { interpretChatCommand, applyChatPlan } from '../lib/chat.js';
 
 const llmRouter = new LLMRouter();
+
+// 6.4 — every successful provider call reports an estimated cost here. Kept as
+// a simple in-memory accumulator flushed to storage on each call rather than
+// awaited inline, since usage tracking must never slow down or block a fix.
+let costTotals = { total: 0, calls: 0, byProvider: {} };
+chrome.storage.local.get('costTotals').then(r => { if (r.costTotals) costTotals = r.costTotals; });
+
+llmRouter.setUsageRecorder((provider, costUSD) => {
+  costTotals = addUsage(costTotals, provider, costUSD);
+  chrome.storage.local.set({ costTotals }).catch(() => {});
+});
 
 /* ═══════════════════════════════════════════
    Lighthouse cache  (tab URL → result)
    ═══════════════════════════════════════════ */
-const lighthouseCache    = new Map(); // url → { data, fetchedAt }
+const lighthouseCache    = new Map(); // url → { data, fetchedAt }  (in-memory mirror)
 const lighthouseInFlight = new Set(); // urls currently being fetched
-const LIGHTHOUSE_TTL     = 5 * 60 * 1000; // 5 min
+const LIGHTHOUSE_TTL     = 30 * 60 * 1000; // 30 min — reduces API calls dramatically
 
 /* ═══════════════════════════════════════════
    Message router — handles all message types
@@ -29,7 +54,7 @@ const LIGHTHOUSE_TTL     = 5 * 60 * 1000; // 5 min
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   const handlers = {
     'scan':               () => handleScan(msg.tabId),
-    'fix':                () => handleFix(msg.issue, msg.pageUrl, msg.tabId),
+    'fix':                () => handleFix(msg.issue, msg.pageUrl, msg.tabId, msg.designInfo, msg.attempts, msg.deterministicOnly),
     'get-settings':       () => getSettings(),
     'save-settings':      () => saveSettings(msg.settings),
     'get-history':        () => getHistory(),
@@ -46,6 +71,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     'reset-patches':      () => sendToTab(msg.tabId, { type: 'reset-patches' }),
     'verify-patches':     () => handleVerifyPatches(msg.tabId),
     'analyze-all':        () => handleAnalyzeAll(msg.issues, msg.pageUrl, msg.designInfo, msg.tabId),
+    'judgment-scan':      () => handleJudgmentScan(msg.tabId, msg.automatedPassCount),
+    'audit-append':       () => appendAudit(msg.entry),
+    'audit-get':          () => getAudit(msg.pageUrl),
+    'audit-clear':        () => clearAudit(),
+    'audit-merge':        () => mergeAuditEntries(msg.entries),
+    'crawl-discover':     () => discoverPages(msg.origin, msg.limit),
+    'crawl-scan':         () => crawlScan(msg.urls),
+    'screenreader-scan':  () => screenReaderScan(msg.tabId),
+    'vision-scan':        () => handleVisionScan(msg.tabId),
+    'vision-alt':         () => handleVisionAlt(msg.tabId, msg.imageSrc),
+    'impairment-apply':   () => handleImpairmentApply(msg.tabId, msg.key),
+    'chat-command':       () => handleChatCommand(msg.instruction, msg.issues),
+    'cost-get':           () => Promise.resolve({ ...costTotals, formatted: formatUSD(costTotals.total) }),
+    'cost-reset':         () => { costTotals = { total: 0, calls: 0, byProvider: {} }; return chrome.storage.local.set({ costTotals }).then(() => ({ reset: true })); },
+    'github-open-pr':     () => handleGithubOpenPr(msg.entries, msg.pageUrl, msg.patchContent),
+    'ambient-route-changed': () => handleAmbientTrigger(sender?.tab?.id, msg.url),
   };
 
   const handler = handlers[msg.action];
@@ -346,8 +387,73 @@ async function handleScan(tabId) {
         const sz = window.getComputedStyle(el).fontSize;
         if (sz) typeSizes.add(sz);
       }
+      // Sort sizes descending (largest first)
+      const typeSizeSorted = [...typeSizes]
+        .map(s => parseFloat(s))
+        .filter(n => !isNaN(n) && n > 0)
+        .sort((a, b) => b - a)
+        .filter((v, i, arr) => arr.indexOf(v) === i) // unique
+        .slice(0, 10)
+        .map(n => n + 'px');
 
-      return { colors, fonts, tech, meta, tokens, typeSizes: [...typeSizes].slice(0, 20) };
+      /* ── Resource stats ── */
+      const allImages   = Array.from(document.querySelectorAll('img'));
+      const allScripts  = Array.from(document.querySelectorAll('script[src]'));
+      const allLinks    = Array.from(document.querySelectorAll('link[rel="stylesheet"]'));
+      const allAnchors  = Array.from(document.querySelectorAll('a[href]'));
+      const externalLinks = allAnchors.filter(a => {
+        try { return new URL(a.href).hostname !== window.location.hostname; } catch { return false; }
+      });
+      const lazyImages  = allImages.filter(i => i.loading === 'lazy' || i.getAttribute('data-src'));
+      const iframes     = Array.from(document.querySelectorAll('iframe'));
+      const forms       = Array.from(document.querySelectorAll('form'));
+      const buttons     = Array.from(document.querySelectorAll('button, [role="button"], input[type="submit"]'));
+      const headings    = Array.from(document.querySelectorAll('h1,h2,h3,h4,h5,h6'));
+      const h1Count     = document.querySelectorAll('h1').length;
+
+      /* ── Security / head ── */
+      const csp = document.querySelector('meta[http-equiv="Content-Security-Policy"]')?.content || null;
+      const robotsMeta = metas['robots'] || null;
+      const hasHTTPS = window.location.protocol === 'https:';
+      const hasCanonical = !!document.querySelector('link[rel="canonical"]');
+      const hasOgImage = !!metas['og:image'];
+      const hasDescription = !!(metas['description'] || metas['og:description']);
+      const hasLang = !!document.documentElement.lang;
+      const hasViewport = !!metas['viewport'];
+      const structuredData = Array.from(document.querySelectorAll('script[type="application/ld+json"]')).map(s => {
+        try { return JSON.parse(s.textContent)?.['@type'] || null; } catch { return null; }
+      }).filter(Boolean);
+
+      const pageStats = {
+        domNodes:      document.querySelectorAll('*').length,
+        images:        allImages.length,
+        lazyImages:    lazyImages.length,
+        scripts:       allScripts.length,
+        stylesheets:   allLinks.length,
+        iframes:       iframes.length,
+        forms:         forms.length,
+        buttons:       buttons.length,
+        links:         allAnchors.length,
+        externalLinks: externalLinks.length,
+        headings:      headings.length,
+        h1Count,
+      };
+
+      const seoSignals = {
+        hasHTTPS,
+        hasCanonical,
+        hasOgImage,
+        hasDescription,
+        hasLang,
+        hasViewport,
+        csp:            !!csp,
+        robotsMeta,
+        structuredData,
+        canonical:      document.querySelector('link[rel="canonical"]')?.href || null,
+        ogImage:        metas['og:image'] || null,
+      };
+
+      return { colors, fonts, tech, meta, tokens, typeSizes: typeSizeSorted, pageStats, seoSignals };
     }
   });
 
@@ -445,7 +551,7 @@ function normalizeAxeResults(raw) {
       bySeverity
     },
     issues: [...violations, ...incomplete],
-    metadata: { axeVersion: raw.axeVersion || 'unknown', scanEngine: 'axe-core', scanSource: 'accea-agent-chrome-extension' }
+    metadata: { axeVersion: raw.axeVersion || 'unknown', scanEngine: 'axe-core', scanSource: 'sitescope360-chrome-extension' }
   };
 }
 
@@ -524,11 +630,34 @@ function _sendMessageToTab(tabId, message) {
    Results cached per URL for LIGHTHOUSE_TTL ms.
    ═══════════════════════════════════════════ */
 
+// Restore in-memory cache from session storage on SW startup
+(async () => {
+  try {
+    const stored = await chrome.storage.session.get('lighthouseCache');
+    if (stored.lighthouseCache) {
+      for (const [url, entry] of Object.entries(stored.lighthouseCache)) {
+        if (Date.now() - entry.fetchedAt < LIGHTHOUSE_TTL) {
+          lighthouseCache.set(url, entry);
+        }
+      }
+    }
+  } catch { /* session storage unavailable */ }
+})();
+
+async function persistLighthouseCache() {
+  try {
+    const obj = {};
+    for (const [url, entry] of lighthouseCache.entries()) obj[url] = entry;
+    await chrome.storage.session.set({ lighthouseCache: obj });
+  } catch { /* best-effort */ }
+}
+
 function getLighthouseCache(url) {
   const cached = lighthouseCache.get(url);
   if (!cached) return { status: 'none' };
   if (Date.now() - cached.fetchedAt > LIGHTHOUSE_TTL) {
     lighthouseCache.delete(url);
+    persistLighthouseCache();
     return { status: 'none' };
   }
   return { status: 'ready', data: cached.data };
@@ -640,11 +769,12 @@ async function doLighthouseFetch(url) {
     };
 
     lighthouseCache.set(url, { data, fetchedAt: Date.now() });
+    await persistLighthouseCache();
 
     // Push result to popup (if open)
     try { chrome.runtime.sendMessage({ action: 'lighthouse-ready', data }); } catch { /* closed */ }
   } catch (e) {
-    console.warn('[Accea] Lighthouse fetch failed:', e.message);
+    console.warn('[SiteScope 360] Lighthouse fetch failed:', e.message);
     // Push error to popup (if open)
     try { chrome.runtime.sendMessage({ action: 'lighthouse-ready', error: e.message }); } catch { /* closed */ }
   } finally {
@@ -780,21 +910,91 @@ async function handleVerifyPatches(tabId) {
 /**
  * Generate a fix using the cascading LLM router
  */
-async function handleFix(issue, pageUrl, tabId) {
-  const settings = await getSettings();
-  const config = {
+/**
+ * Build the config object handed to the LLM router.
+ * `designInfo` carries the page's brand palette so deterministic contrast fixes
+ * can stay on-brand instead of defaulting to black on white.
+ */
+function buildLLMConfig(settings, designInfo = null) {
+  return {
     privacyMode: settings.privacyMode !== false,  // default: true
     cloudOptIn:  settings.cloudOptIn === true,     // default: false
     localServerUrl: settings.localServerUrl || 'http://localhost:3000',
-    geminiApiKey: settings.geminiApiKey || ''      // pass key so Gemini branch activates
+    llmProvider: settings.llmProvider || '',
+    llmModel:    settings.llmModel || '',
+    llmApiKey:   settings.llmApiKey || settings.geminiApiKey || '',
+    geminiApiKey: settings.geminiApiKey || '',
+    designInfo
   };
+}
 
-  // If going to cloud and privacy mode is off, redact via content script
-  let safeIssue = issue;
-  if (config.cloudOptIn && !config.privacyMode && tabId) {
-    const redacted = await sendToTab(tabId, { type: 'redact-issue', issue });
-    if (redacted?.ok) safeIssue = redacted.redacted;
+/**
+ * Whether this request could reach a third-party host.
+ * Privacy mode is the master switch — a saved API key alone is not consent.
+ */
+function cloudReachable(config) {
+  if (config.privacyMode) return false;
+  return !!config.llmApiKey || config.cloudOptIn;
+}
+
+/**
+ * Redact an issue whenever it could leave the machine.
+ *
+ * Fails CLOSED: if the redactor cannot be reached we strip the raw element HTML
+ * rather than transmitting it unredacted.
+ */
+async function redactIfCloudReachable(issue, config, tabId) {
+  if (!cloudReachable(config)) return issue;
+
+  if (tabId) {
+    try {
+      const redacted = await sendToTab(tabId, { type: 'redact-issue', issue });
+      if (redacted?.ok && redacted.redacted) return redacted.redacted;
+      console.warn('[SiteScope 360] Redactor returned no result — withholding element HTML');
+    } catch (e) {
+      console.warn('[SiteScope 360] Redaction failed:', e.message);
+    }
   }
+
+  return { ...issue, html: [], nodes: [] };
+}
+
+/**
+ * Give the model a way to inspect the live page.
+ *
+ * Only offered when the request is already allowed to reach a provider — the
+ * tool results describe the page, so handing them out under privacy mode would
+ * reopen the exact hole task 0.1 closed. Returns null when tools must not be used.
+ */
+function buildToolExecutor(tabId, config) {
+  if (!tabId || !cloudReachable(config)) return null;
+
+  return async (name, args) => {
+    try {
+      const [{ result }] = await chrome.scripting.executeScript({
+        target: { tabId },
+        world: 'MAIN',
+        func: runDomTool,
+        args: [name, args || {}]
+      });
+      return result ?? { error: 'Tool returned nothing' };
+    } catch (e) {
+      // Never throw into the model loop — an error object is a usable answer,
+      // an exception kills the whole fix request.
+      return { error: String(e && e.message ? e.message : e) };
+    }
+  };
+}
+
+async function handleFix(issue, pageUrl, tabId, designInfo, attempts, deterministicOnly = false) {
+  const settings = await getSettings();
+  const config = buildLLMConfig(settings, designInfo);
+  config.attempts = Array.isArray(attempts) ? attempts : [];
+  config.deterministicOnly = deterministicOnly === true;
+  // No point wiring up page tools for a request that will never reach a model.
+  config.executeTool = config.deterministicOnly ? null : buildToolExecutor(tabId, config);
+
+  const safeIssue = await redactIfCloudReachable(issue, config, tabId);
 
   const fix = await llmRouter.generateFix(safeIssue, pageUrl, config);
   return { fix };
@@ -806,15 +1006,411 @@ async function handleFix(issue, pageUrl, tabId) {
  */
 async function handleAnalyzeAll(issues, pageUrl, designInfo, tabId) {
   const settings = await getSettings();
-  const config = {
-    privacyMode: settings.privacyMode !== false,
-    cloudOptIn:  settings.cloudOptIn === true,
-    localServerUrl: settings.localServerUrl || 'http://localhost:3000',
-    geminiApiKey: settings.geminiApiKey || ''
+  const config = buildLLMConfig(settings, designInfo);
+
+  let safeIssues = issues || [];
+  if (cloudReachable(config)) {
+    safeIssues = await Promise.all(
+      safeIssues.map(i => redactIfCloudReachable(i, config, tabId))
+    );
+  }
+
+  const result = await llmRouter.generateFullAnalysis(safeIssues, pageUrl, designInfo, config);
+  return { result };
+}
+
+/* ═══════════════════════════════════════════
+   Judgment scan — issues the automated audit passes
+   ═══════════════════════════════════════════ */
+
+/**
+ * Collect candidates from the page and assess them for quality rather than
+ * presence. Deliberately runs no model: the heuristics are instant, free, and
+ * give the same answer every time, which is what makes the result demonstrable.
+ */
+async function handleJudgmentScan(tabId, automatedPassCount = null) {
+  if (!tabId) {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    tabId = tab?.id;
+    if (!tabId) throw new Error('No active tab found');
+  }
+
+  const [{ result: payload }] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: collectJudgmentCandidates
+  });
+
+  if (!payload) throw new Error('Could not read the page');
+
+  // Keyboard behaviour is measured on the live page, then merged into the same
+  // set — from the user's point of view these are all "things the automated
+  // audit passed", and splitting them across two panels would hide them.
+  let keyboardFindings = [];
+  try {
+    const [{ result: profile }] = await chrome.scripting.executeScript({
+      target: { tabId }, world: 'MAIN', func: globalThis.Keyboard.collectFocusProfile
+    });
+    if (profile) keyboardFindings = globalThis.Keyboard.assessFocusOrder(profile);
+  } catch (e) {
+    console.warn('[SiteScope 360] keyboard pass failed:', e.message);
+  }
+
+  // Sequence-level screen reader problems belong in the same panel: individually
+  // valid controls that are unusable heard one after another.
+  let srFindings = [];
+  try {
+    const sr = await screenReaderScan(tabId);
+    srFindings = sr.findings;
+  } catch (e) {
+    console.warn('[SiteScope 360] screen reader pass failed:', e.message);
+  }
+
+  let readingOrderFindings = [];
+  try {
+    const [{ result: roProfile }] = await chrome.scripting.executeScript({
+      target: { tabId }, world: 'MAIN', func: globalThis.ReadingOrder.collectReadingOrderProfile
+    });
+    if (roProfile) readingOrderFindings = globalThis.ReadingOrder.assessReadingOrder(roProfile.elements);
+  } catch (e) {
+    console.warn('[SiteScope 360] reading-order pass failed:', e.message);
+  }
+
+  // 3.1's LLM nuance pass — optional, silent on failure, and only attempted
+  // when cloud is actually reachable. This is additive polish on top of a
+  // panel that already works with zero network calls; it must never be able
+  // to block or degrade the deterministic result.
+  let nuanceFindings = [];
+  try {
+    const settings = await getSettings();
+    const config = buildLLMConfig(settings);
+    if (cloudReachable(config) && config.llmApiKey) {
+      const provider = config.llmProvider || 'gemini';
+      const callProvider = (prompt, schema) => llmRouter._callProvider(
+        provider, config.llmModel, config.llmApiKey, prompt, { schema, schemaName: 'judgment_nuance' }
+      );
+      nuanceFindings = await runJudgmentNuancePass(callProvider, payload);
+    }
+  } catch (e) {
+    console.warn('[SiteScope 360] judgment nuance pass skipped:', e.message);
+  }
+
+  const findings = [
+    ...assessCandidates(payload), ...keyboardFindings, ...srFindings,
+    ...readingOrderFindings, ...nuanceFindings
+  ];
+
+  return {
+    findings,
+    summary: summarizeJudgment(findings, automatedPassCount),
+    scanned: {
+      images: payload.images?.length || 0,
+      links:  payload.links?.length  || 0
+    }
+  };
+}
+
+/* ═══════════════════════════════════════════
+   Impairment simulation — 3.8
+   ═══════════════════════════════════════════ */
+
+/**
+ * Runs directly via chrome.scripting rather than a content-script message: the
+ * effect is a DOM style change, and executeScript avoids the ping/inject dance
+ * sendToTab does for a one-shot call.
+ */
+async function handleImpairmentApply(tabId, key) {
+  if (!tabId) {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    tabId = tab?.id;
+    if (!tabId) throw new Error('No active tab found');
+  }
+  const svgDefsHtml = key ? globalThis.Impairment.buildSvgDefs() : null;
+  const [{ result }] = await chrome.scripting.executeScript({
+    target: { tabId }, world: 'MAIN',
+    func: globalThis.Impairment.applyImpairment,
+    args: [key || null, globalThis.Impairment.PRESETS, svgDefsHtml]
+  });
+  return result || { active: null };
+}
+
+/* ═══════════════════════════════════════════
+   Vision analysis — 3.2 / 3.3
+   ═══════════════════════════════════════════ */
+
+/** Resolve which vision-capable provider/key to use, honoring privacy mode exactly like text fixes. */
+async function visionCredentials() {
+  const settings = await getSettings();
+  const config = buildLLMConfig(settings);
+  if (!cloudReachable(config)) throw new Error('Vision analysis needs cloud AI, which is off under Privacy Mode.');
+  const provider = config.llmProvider || (config.llmApiKey ? 'gemini' : 'none');
+  if (provider === 'none' || !config.llmApiKey) throw new Error('No AI provider configured — add an API key in Settings.');
+  return { provider, model: config.llmModel, apiKey: config.llmApiKey };
+}
+
+async function handleVisionScan(tabId) {
+  if (!tabId) {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    tabId = tab?.id;
+    if (!tabId) throw new Error('No active tab found');
+  }
+  const { provider, model, apiKey } = await visionCredentials();
+  const dataUrl = await chrome.tabs.captureVisibleTab({ format: 'png' });
+  const findings = await analyzeScreenshot(provider, model, apiKey, dataUrl);
+  return { findings };
+}
+
+async function handleVisionAlt(tabId, imageSrc) {
+  if (!imageSrc) throw new Error('No image supplied');
+  const { provider, model, apiKey } = await visionCredentials();
+
+  // Fetch the actual pixels rather than re-screenshotting the tab — works for
+  // any image on the page, not just what happens to be in the viewport.
+  const res = await fetch(imageSrc);
+  const blob = await res.blob();
+  const dataUrl = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+
+  const altText = await describeImageFromVision(provider, model, apiKey, dataUrl);
+  if (!altText) throw new Error('Could not generate a description');
+  return { altText };
+}
+
+/* ═══════════════════════════════════════════
+   Screen reader preview
+   ═══════════════════════════════════════════ */
+
+async function screenReaderScan(tabId) {
+  if (!tabId) {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    tabId = tab?.id;
+    if (!tabId) throw new Error('No active tab found');
+  }
+  const [{ result }] = await chrome.scripting.executeScript({
+    target: { tabId }, world: 'MAIN', func: globalThis.ScreenReader.collectAnnouncements
+  });
+  if (!result) throw new Error('Could not read the page');
+
+  return {
+    transcript: globalThis.ScreenReader.buildTranscript(result.items),
+    findings: globalThis.ScreenReader.assessTranscript(result.items),
+    url: result.url
+  };
+}
+
+/* ═══════════════════════════════════════════
+   Multi-page crawl
+   ═══════════════════════════════════════════ */
+
+/**
+ * Find pages to scan. Tries the sitemap first, following one level of
+ * sitemapindex; falls back to same-origin links on the current page.
+ */
+async function discoverPages(origin, limit) {
+  if (!origin) throw new Error('No origin supplied');
+  const cap = Math.min(limit || globalThis.Crawl.DEFAULT_LIMIT, 100);
+
+  const fetchText = async (url) => {
+    try {
+      const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      return r.ok ? await r.text() : null;
+    } catch { return null; }
   };
 
-  const result = await llmRouter.generateFullAnalysis(issues, pageUrl, designInfo, config);
-  return { result };
+  for (const path of ['/sitemap.xml', '/sitemap_index.xml']) {
+    const xml = await fetchText(origin + path);
+    if (!xml) continue;
+
+    let { urls, isIndex } = globalThis.Crawl.parseSitemap(xml);
+
+    // A sitemapindex lists sitemaps, not pages — resolve one level deeper or we
+    // would hand back .xml files and scan nothing useful.
+    if (isIndex) {
+      const nested = [];
+      for (const sm of urls.slice(0, 5)) {
+        const child = await fetchText(sm);
+        if (child) nested.push(...globalThis.Crawl.parseSitemap(child).urls);
+        if (nested.length >= cap) break;
+      }
+      urls = nested;
+    }
+
+    const pages = globalThis.Crawl.filterCrawlUrls(urls, { origin, limit: cap });
+    if (pages.length) return { urls: pages, source: 'sitemap' };
+  }
+
+  return { urls: [], source: 'none' };
+}
+
+/**
+ * Scan each URL in a background tab, one at a time.
+ *
+ * Sequential on purpose: parallel tabs race for CPU and produce unstable axe
+ * results, and hammering a customer's site from their own browser is not a good
+ * first impression. Every tab is closed in a finally block so a failed scan
+ * cannot leak tabs.
+ */
+async function crawlScan(urls) {
+  const results = [];
+
+  for (const url of (urls || [])) {
+    let tab = null;
+    try {
+      tab = await chrome.tabs.create({ url, active: false });
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('Timed out loading page')), 30000);
+        const listener = (id, info) => {
+          if (id === tab.id && info.status === 'complete') {
+            clearTimeout(timer);
+            chrome.tabs.onUpdated.removeListener(listener);
+            resolve();
+          }
+        };
+        chrome.tabs.onUpdated.addListener(listener);
+      });
+
+      const { analysis } = await handleScan(tab.id);
+      results.push({ url, analysis });
+    } catch (e) {
+      results.push({ url, error: e.message });
+    } finally {
+      if (tab?.id) { try { await chrome.tabs.remove(tab.id); } catch { /* already gone */ } }
+    }
+  }
+
+  return { results, summary: globalThis.Crawl.aggregateCrawl(results) };
+}
+
+/* ═══════════════════════════════════════════
+   Audit log — persisted so the record outlives the popup
+   ═══════════════════════════════════════════ */
+
+const AUDIT_KEY = 'remediationAudit';
+
+async function appendAudit(entry) {
+  const built = globalThis.AuditLog.makeAuditEntry(entry || {});
+  if (!built) return { appended: false };
+
+  const { [AUDIT_KEY]: log = [] } = await chrome.storage.local.get(AUDIT_KEY);
+  await chrome.storage.local.set({ [AUDIT_KEY]: globalThis.AuditLog.appendEntry(log, built) });
+  return { appended: true, entry: built };
+}
+
+async function getAudit(pageUrl) {
+  const { [AUDIT_KEY]: log = [] } = await chrome.storage.local.get(AUDIT_KEY);
+  const entries = globalThis.AuditLog.entriesForPage(log, pageUrl);
+  return { entries, summary: globalThis.AuditLog.summarizeAudit(entries) };
+}
+
+/** 6.2 — fold externally-supplied entries (from an imported team bundle) into
+ *  the same append-only log real usage writes to, reusing its exact bounding
+ *  and ordering rules rather than a separate import path. */
+async function mergeAuditEntries(entries) {
+  const { [AUDIT_KEY]: log = [] } = await chrome.storage.local.get(AUDIT_KEY);
+  let next = log;
+  for (const raw of (entries || [])) {
+    const built = globalThis.AuditLog.makeAuditEntry(raw);
+    if (built) next = globalThis.AuditLog.appendEntry(next, built);
+  }
+  await chrome.storage.local.set({ [AUDIT_KEY]: next });
+  return { merged: next.length - log.length };
+}
+
+async function clearAudit() {
+  await chrome.storage.local.remove(AUDIT_KEY);
+  return { cleared: true };
+}
+
+/* ═══════════════════════════════════════════
+   6.5 — GitHub pull request generation
+   ═══════════════════════════════════════════ */
+
+async function handleGithubOpenPr(entries, pageUrl, patchContent) {
+  const settings = await getSettings();
+  const { githubToken, githubOwner, githubRepo, githubBaseBranch } = settings;
+  if (!githubToken || !githubOwner || !githubRepo) {
+    throw new Error('Connect a GitHub repo in Settings first (token, owner, repo).');
+  }
+  return createAccessibilityPr({
+    token: githubToken, owner: githubOwner, repo: githubRepo,
+    baseBranch: githubBaseBranch || 'main', entries, pageUrl, patchContent
+  });
+}
+
+/* ═══════════════════════════════════════════
+   4.2 — Ambient background scanning
+   ═══════════════════════════════════════════ */
+
+const lastAmbientScanAt = new Map(); // tabId -> timestamp
+
+async function handleAmbientTrigger(tabId, url) {
+  if (!tabId || !url) return { skipped: true };
+  const settings = await getSettings();
+  if (!settings.ambientScanEnabled) return { skipped: true };
+
+  const { scanHistory = [] } = await chrome.storage.local.get('scanHistory');
+  if (!shouldAmbientScan(url, scanHistory, true, lastAmbientScanAt.get(tabId) || 0)) {
+    return { skipped: true };
+  }
+
+  const baseline = findBaseline(scanHistory, url);
+  lastAmbientScanAt.set(tabId, Date.now());
+
+  let analysis;
+  try {
+    ({ analysis } = await handleScan(tabId));
+  } catch (e) {
+    return { skipped: true, error: e.message };
+  }
+
+  const result = detectRegression(baseline, analysis);
+  if (result.regressed && chrome.notifications) {
+    try {
+      await chrome.notifications.create({
+        type: 'basic',
+        iconUrl: '/icons/icon-128.png',
+        title: 'SiteScope 360 — regression detected',
+        message: `${new URL(url).hostname}: ${result.message}`
+      });
+    } catch (e) {
+      console.warn('[SiteScope 360] notification failed (permission likely not granted):', e.message);
+    }
+  }
+
+  await storeHistoryEntry(tabId, analysis, {});
+  return { skipped: false, regressed: result.regressed };
+}
+
+// Regular (non-SPA) navigations reuse the same gate.
+chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
+  if (info.status === 'complete' && tab.url) handleAmbientTrigger(tabId, tab.url).catch(() => {});
+});
+
+/* ═══════════════════════════════════════════
+   4.3 — Natural language control over the scan
+   ═══════════════════════════════════════════ */
+
+async function handleChatCommand(instruction, issues) {
+  if (!instruction || !instruction.trim()) throw new Error('No instruction given');
+
+  const settings = await getSettings();
+  const config = buildLLMConfig(settings);
+  if (!cloudReachable(config) || !config.llmApiKey) {
+    throw new Error('Chat control needs cloud AI, which is off under Privacy Mode or has no API key configured.');
+  }
+
+  const provider = config.llmProvider || 'gemini';
+  const callProvider = (prompt, schema) => llmRouter._callProvider(
+    provider, config.llmModel, config.llmApiKey, prompt, { schema, schemaName: 'chat_plan' }
+  );
+
+  const plan = await interpretChatCommand(callProvider, instruction, issues || []);
+  const matched = applyChatPlan(issues || [], plan);
+  return { plan, matchedIssueIds: matched.map(i => i.id) };
 }
 
 /* ═══════════════════════════════════════════
@@ -826,9 +1422,14 @@ const DEFAULT_SETTINGS = {
   cloudOptIn: false,
   localServerUrl: 'http://localhost:3000',
   geminiApiKey: '',
+  llmProvider: '',
+  llmModel: '',
+  llmApiKey: '',
   autoHighlight: true,
   showBadge: true,
   scanOnLoad: false,
+  ambientScanEnabled: false,
+  githubToken: '', githubOwner: '', githubRepo: '', githubBaseBranch: 'main',
   pagespeedApiKey: ''
 };
 
@@ -899,25 +1500,40 @@ function updateBadge(tabId, count) {
 
 chrome.runtime.onInstalled.addListener(async (details) => {
   if (details.reason === 'install') {
-    // Set default settings with Gemini API key
+    // Set default settings with API keys
     const settingsWithKey = {
       ...DEFAULT_SETTINGS,
-      geminiApiKey: 'AIzaSyAegjD3Yp0xsIRdcshnmzzv0l4fAnIltXU'
+      geminiApiKey: 'AIzaSyAegjD3Yp0xsIRdcshnmzzv0l4fAnIltXU',
+      pagespeedApiKey: 'AIzaSyDSENFWIIUXmeTMl4x92OYjdv6LY_KKsZQ'
     };
     await chrome.storage.local.set(settingsWithKey);
-    console.log('[Accea Agent] Extension installed — defaults set with Gemini API key');
+    console.log('[SiteScope 360] Extension installed — defaults set with API keys');
   } else if (details.reason === 'update') {
     // Set Gemini API key on update if not already set
-    const { geminiApiKey } = await chrome.storage.local.get('geminiApiKey');
+    const { geminiApiKey, pagespeedApiKey } = await chrome.storage.local.get(['geminiApiKey', 'pagespeedApiKey']);
     if (!geminiApiKey) {
       await chrome.storage.local.set({ geminiApiKey: 'AIzaSyAegjD3Yp0xsIRdcshnmzzv0l4fAnIltXU' });
-      console.log('[Accea Agent] Extension updated — Gemini API key added');
+      console.log('[SiteScope 360] Extension updated — Gemini API key added');
+    }
+    if (!pagespeedApiKey) {
+      await chrome.storage.local.set({ pagespeedApiKey: 'AIzaSyDSENFWIIUXmeTMl4x92OYjdv6LY_KKsZQ' });
+      console.log('[SiteScope 360] Extension updated — PageSpeed API key added');
     }
   }
 
   // Pre-detect LLM capabilities
   const caps = await llmRouter.detectCapabilities();
-  console.log('[Accea Agent] LLM capabilities:', caps);
+  console.log('[SiteScope 360] LLM capabilities:', caps);
 });
 
-console.log('[Accea Agent] Service worker loaded');
+// Seed API keys on every SW startup (covers reload without remove/re-add)
+async function seedApiKeys() {
+  const { pagespeedApiKey, geminiApiKey } = await chrome.storage.local.get(['pagespeedApiKey', 'geminiApiKey']);
+  const patch = {};
+  if (!pagespeedApiKey) patch.pagespeedApiKey = 'AIzaSyDSENFWIIUXmeTMl4x92OYjdv6LY_KKsZQ';
+  if (!geminiApiKey)    patch.geminiApiKey    = 'AIzaSyAegjD3Yp0xsIRdcshnmzzv0l4fAnIltXU';
+  if (Object.keys(patch).length) await chrome.storage.local.set(patch);
+}
+seedApiKeys();
+
+console.log('[SiteScope 360] Service worker loaded');

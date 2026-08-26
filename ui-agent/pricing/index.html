@@ -209,7 +209,7 @@
         <div class="popular-ribbon">Most Popular</div>
         <div class="plan-label">Pro</div>
         <div class="price-row">
-          <div class="price-amount" id="priceAmountPro">$19</div>
+          <div class="price-amount" id="priceAmountPro">₹999</div>
           <div class="price-per" id="pricePerPro">/ mo</div>
         </div>
         <div class="plan-tagline">For developers who ship accessible products fast.</div>
@@ -338,7 +338,7 @@
     const btnAnnual  = document.getElementById('btnAnnual');
 
     function applyBilling(annual) {
-      document.getElementById('priceAmountPro').textContent = annual ? '$15' : '$19';
+      document.getElementById('priceAmountPro').textContent = annual ? '₹799' : '₹999';
       document.getElementById('pricePerPro').textContent    = annual ? '/ mo · billed yearly' : '/ mo';
     }
 

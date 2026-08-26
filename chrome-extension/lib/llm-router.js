@@ -9,9 +9,362 @@
  *   5. Deterministic — no LLM, rule-based suggestions only
  */
 
+import { DOM_TOOLS, SUBMIT_TOOL_NAME, buildSubmitTool } from './dom-tools.js';
+import { estimateCallCost } from './cost-meter.js';
+
+/* ═══════════════════════════════════════════
+   Color helpers — used to fix contrast with the page's own palette
+   ═══════════════════════════════════════════ */
+
+function hexToRgb(hex) {
+  if (!hex) return null;
+  let h = String(hex).trim().replace(/^#/, '');
+  if (h.length === 3) h = h.split('').map(c => c + c).join('');
+  if (!/^[0-9a-f]{6}$/i.test(h)) return null;
+  return {
+    r: parseInt(h.slice(0, 2), 16),
+    g: parseInt(h.slice(2, 4), 16),
+    b: parseInt(h.slice(4, 6), 16)
+  };
+}
+
+/** WCAG relative luminance */
+function relativeLuminance({ r, g, b }) {
+  const channel = (v) => {
+    const s = v / 255;
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+}
+
+/** WCAG contrast ratio between two hex colors (1–21) */
+function contrastRatio(hexA, hexB) {
+  const a = hexToRgb(hexA);
+  const b = hexToRgb(hexB);
+  if (!a || !b) return 0;
+  const la = relativeLuminance(a);
+  const lb = relativeLuminance(b);
+  const [hi, lo] = la > lb ? [la, lb] : [lb, la];
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+/**
+ * Pick an accessible foreground/background pair from the page's own brand palette.
+ *
+ * Among all passing pairs we deliberately choose the one with the LOWEST passing
+ * ratio — it clears the threshold while staying as close as possible to the
+ * original design intent. Maximum contrast would always collapse to black on
+ * white, which is exactly the fix designers reject.
+ *
+ * Falls back to black on white only when no pair in the palette can reach the target.
+ */
+function pickAccessiblePair(designInfo, target = 4.5) {
+  const palette = [...new Set(
+    (designInfo?.colors || [])
+      .map(c => (typeof c === 'string' ? c : c?.hex))
+      .filter(hex => hexToRgb(hex))
+      .map(hex => String(hex).toLowerCase())
+  )];
+
+  let best = null;
+  for (const bg of palette) {
+    for (const fg of palette) {
+      if (fg === bg) continue;
+      const ratio = contrastRatio(fg, bg);
+      if (ratio >= target && (!best || ratio < best.ratio)) {
+        best = { fg, bg, ratio };
+      }
+    }
+  }
+
+  if (best) return { ...best, fromBrand: true };
+  return {
+    fg: '#000000',
+    bg: '#ffffff',
+    ratio: contrastRatio('#000000', '#ffffff'),
+    fromBrand: false
+  };
+}
+
+/* ═══════════════════════════════════════════
+   Response schemas — every provider is forced to return this shape
+   ═══════════════════════════════════════════ */
+
+const FIX_PROPERTIES = {
+  fixTitle:    { type: 'string',  description: 'Short title for the fix' },
+  before:      { type: 'string',  description: 'The problematic code' },
+  after:       { type: 'string',  description: 'The corrected code' },
+  explanation: { type: 'string',  description: 'One or two sentences on why this fixes it' },
+  effort:      { type: 'string',  enum: ['S', 'M', 'L'] },
+  confidence:  { type: 'number',  description: 'Confidence from 0.0 to 1.0' }
+};
+
+const FIX_SCHEMA = {
+  type: 'object',
+  properties: FIX_PROPERTIES,
+  required: Object.keys(FIX_PROPERTIES)
+};
+
+/**
+ * Full-page analysis.
+ *
+ * `fixes` is an ARRAY here, not an object keyed by rule ID. Dynamic keys cannot be
+ * expressed in the strict-schema dialects OpenAI and Gemini accept, so the wire
+ * format carries `ruleId` on each entry and `_normalizeFullAnalysis` folds it back
+ * into the keyed object the rest of the extension expects.
+ */
+const FULL_ANALYSIS_SCHEMA = {
+  type: 'object',
+  properties: {
+    summary:  { type: 'string', description: 'Two or three sentences on the page state' },
+    priority: { type: 'array', items: { type: 'string' }, description: 'Rule IDs, most urgent first' },
+    actionPlan: {
+      type: 'object',
+      properties: {
+        immediate: { type: 'array', items: { type: 'string' } },
+        shortTerm: { type: 'array', items: { type: 'string' } },
+        longTerm:  { type: 'array', items: { type: 'string' } }
+      },
+      required: ['immediate', 'shortTerm', 'longTerm']
+    },
+    fixes: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: { ruleId: { type: 'string' }, ...FIX_PROPERTIES },
+        required: ['ruleId', ...Object.keys(FIX_PROPERTIES)]
+      }
+    }
+  },
+  required: ['summary', 'priority', 'actionPlan', 'fixes']
+};
+
+/**
+ * OpenAI and Mistral strict mode require `additionalProperties: false` on every
+ * object node. Gemini rejects that keyword outright, so schemas are adapted per
+ * provider from the one canonical definition above.
+ */
+function toStrictSchema(node) {
+  if (!node || typeof node !== 'object') return node;
+  if (node.type === 'object') {
+    const props = {};
+    for (const [k, v] of Object.entries(node.properties || {})) props[k] = toStrictSchema(v);
+    return { ...node, properties: props, additionalProperties: false };
+  }
+  if (node.type === 'array') return { ...node, items: toStrictSchema(node.items) };
+  return node;
+}
+
+/** Gemini accepts an OpenAPI subset — drop anything outside it. */
+function toGeminiSchema(node) {
+  if (!node || typeof node !== 'object') return node;
+  const out = {};
+  if (node.type) out.type = node.type;
+  if (node.enum) out.enum = node.enum;
+  if (node.description) out.description = node.description;
+  if (node.type === 'object') {
+    out.properties = {};
+    for (const [k, v] of Object.entries(node.properties || {})) out.properties[k] = toGeminiSchema(v);
+    if (node.required) out.required = node.required;
+  }
+  if (node.type === 'array') out.items = toGeminiSchema(node.items);
+  return out;
+}
+
+/**
+ * Extract the first complete JSON object from text.
+ *
+ * Replaces the previous greedy `/\{[\s\S]*\}/` match, which spanned from the first
+ * brace to the LAST one anywhere in the response and therefore broke whenever a
+ * model added trailing prose containing a closing brace. This walks the string
+ * tracking depth, and ignores braces inside string literals and escapes.
+ *
+ * Only used for backends that cannot enforce a schema (on-device, local server).
+ */
+function extractJsonObject(text) {
+  if (!text || typeof text !== 'string') return null;
+  const start = text.indexOf('{');
+  if (start === -1) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (escaped) { escaped = false; continue; }
+    if (ch === '\\') { escaped = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) {
+        try {
+          return JSON.parse(text.slice(start, i + 1));
+        } catch {
+          return null;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/** Strip markdown code fences a model may have wrapped the JSON in. */
+function stripCodeFence(text) {
+  if (!text || typeof text !== 'string') return text;
+  return text
+    .trim()
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/, '')
+    .trim();
+}
+
+/**
+ * Fold the schema's `fixes` array back into the rule-ID-keyed object the rest of
+ * the extension consumes. Accepts the legacy keyed-object shape unchanged, since
+ * the local orchestrator still returns it.
+ */
+function normalizeFullAnalysis(parsed) {
+  if (!parsed || typeof parsed !== 'object') return null;
+  if (!parsed.fixes) return null;
+
+  if (Array.isArray(parsed.fixes)) {
+    const keyed = {};
+    for (const fix of parsed.fixes) {
+      if (!fix || !fix.ruleId) continue;
+      const { ruleId, ...rest } = fix;
+      keyed[ruleId] = rest;
+    }
+    return { ...parsed, fixes: keyed };
+  }
+
+  return typeof parsed.fixes === 'object' ? parsed : null;
+}
+
+/* ═══════════════════════════════════════════
+   Autonomy policy (2.4)
+   ═══════════════════════════════════════════ */
+
+/**
+ * How far a fix may be trusted without a human looking at it.
+ *
+ * Deliberately conservative. The cost of a wrong auto-applied fix is not one bad
+ * element — it is the user no longer trusting any of them.
+ */
+export function autonomyFor(fix) {
+  const c = typeof fix?.confidence === 'number' ? fix.confidence : 0;
+  if (c >= 0.9) return 'auto';      // apply without asking
+  if (c >= 0.7) return 'flag';      // apply, but mark it for review
+  return 'propose';                 // show it; do not touch the page
+}
+
+/* ═══════════════════════════════════════════
+   Fix cache (2.5)
+   ═══════════════════════════════════════════ */
+
+const FIX_CACHE_TTL = 30 * 60 * 1000;   // 30 min, mirroring the Lighthouse cache
+
+/**
+ * Signature of an element for caching purposes: shape only, no content.
+ *
+ * A design system renders the same broken button forty times. They differ by id,
+ * text and data attributes but are one problem with one fix, so those are
+ * stripped and only tag + classes + role remain.
+ */
+export function elementSignature(html) {
+  const raw = String(html || '').trim();
+  if (!raw) return 'none';
+
+  const tag = (raw.match(/^<(\w+)/) || [])[1]?.toLowerCase() || 'unknown';
+  const cls = (raw.match(/\bclass\s*=\s*["']([^"']*)["']/i) || [])[1] || '';
+  const role = (raw.match(/\brole\s*=\s*["']([^"']*)["']/i) || [])[1] || '';
+  const type = (raw.match(/\btype\s*=\s*["']([^"']*)["']/i) || [])[1] || '';
+
+  const classes = cls.split(/\s+/).filter(Boolean).sort().slice(0, 4).join('.');
+  return [tag, classes, role, type].join('|');
+}
+
 export class LLMRouter {
   constructor() {
     this._capabilities = null;
+    this._fixCache = new Map();   // signature → { fix, at }
+    this._onUsage = null;         // optional (provider, costUSD) callback — see setUsageRecorder
+  }
+
+  /**
+   * 6.4 — inject a callback fired after every successful network call to a
+   * provider, with an estimated USD cost. A callback rather than a hard
+   * dependency: this module has no opinion on where usage gets persisted, and
+   * a router used outside the extension (tests, the local orchestrator) should
+   * not require storage wiring just to generate a fix.
+   */
+  setUsageRecorder(fn) {
+    this._onUsage = typeof fn === 'function' ? fn : null;
+  }
+
+  _recordUsage(provider, promptChars, resultChars) {
+    if (!this._onUsage) return;
+    try {
+      this._onUsage(provider, estimateCallCost(provider, promptChars, resultChars));
+    } catch { /* usage tracking must never break a fix */ }
+  }
+
+  /* ── Fix cache ── */
+
+  _cacheKey(issue) {
+    return `${issue?.id || 'unknown'}::${elementSignature((issue?.html || [])[0])}`;
+  }
+
+  _cacheGet(issue) {
+    const entry = this._fixCache.get(this._cacheKey(issue));
+    if (!entry) return null;
+    if (Date.now() - entry.at > FIX_CACHE_TTL) {
+      this._fixCache.delete(this._cacheKey(issue));
+      return null;
+    }
+    return entry.fix;
+  }
+
+  _cacheSet(issue, fix) {
+    if (!fix || !fix.after) return;
+    this._fixCache.set(this._cacheKey(issue), { fix, at: Date.now() });
+  }
+
+  /**
+   * Backend order for this issue (2.6).
+   *
+   * The deterministic engine's confidence is a free difficulty signal: a rule it
+   * nearly solved is a small problem, one it could not touch at all needs the
+   * strongest model and the page tools. Sending both to the same backend wastes
+   * capability on one and starves the other.
+   */
+  _backendOrder(difficulty, caps, cloudAllowed) {
+    const order = [];
+    const cloud = cloudAllowed && caps.gemini;
+
+    if (difficulty >= 0.4) {
+      // Nearly solved — on-device is enough and costs nothing.
+      if (caps.windowAI) order.push('windowAI');
+      if (cloud) order.push('cloud');
+    } else {
+      // Genuinely hard — lead with the strong model, which also has the tools.
+      if (cloud) order.push('cloud');
+      if (caps.windowAI) order.push('windowAI');
+    }
+    if (caps.localhost) order.push('localhost');
+    return order;
+  }
+
+  /**
+   * Whether this request is allowed to reach a third-party LLM host.
+   *
+   * Privacy mode is the master switch and defaults to ON, so a saved API key is
+   * NOT on its own sufficient consent to send page content off the machine.
+   */
+  _cloudAllowed(config = {}) {
+    return config.privacyMode === false;
   }
 
   /**
@@ -31,12 +384,14 @@ export class LLMRouter {
       caps.windowAI = false;
     }
 
-    // 2. Check Gemini API (needs API key from settings)
+    // 2. Check configured LLM provider API key
     try {
-      // Get API key from chrome.storage
       if (typeof chrome !== 'undefined' && chrome.storage) {
-        const result = await chrome.storage.local.get('geminiApiKey');
-        caps.gemini = !!(result.geminiApiKey && result.geminiApiKey.trim());
+        const result = await chrome.storage.local.get(['geminiApiKey', 'llmApiKey', 'llmProvider']);
+        const key = result.llmApiKey || result.geminiApiKey || '';
+        caps.gemini = !!(key && key.trim());   // reuse cap name — means "cloud LLM available"
+        caps.llmProvider = result.llmProvider || (key ? 'gemini' : 'none');
+        caps.llmApiKey   = key;
       }
     } catch (e) {
       caps.gemini = false;
@@ -66,46 +421,84 @@ export class LLMRouter {
    * Generate a fix using the best available backend
    */
   async generateFix(issue, pageUrl, config = {}) {
-    // 0. Try deterministic fix FIRST — instant for known rules (no LLM needed)
-    const deterministicResult = this._deterministicFix(issue);
-    if (deterministicResult.confidence >= 0.7) {
+    // Previous attempts at this same issue that were applied, re-scanned, and
+    // found NOT to have cleared the violation.
+    const attempts = Array.isArray(config.attempts) ? config.attempts : [];
+
+    // 0. Try deterministic fix FIRST — instant for known rules (no LLM needed).
+    //
+    // Skipped once an attempt has already failed: the deterministic handler is a
+    // pure function of the issue, so it would return the identical fix that just
+    // failed verification and the retry loop would spin forever. A failed attempt
+    // is precisely the signal that this case needs judgement, not a rule.
+    const deterministicResult = this._deterministicFix(issue, config.designInfo);
+    if (!attempts.length && deterministicResult.confidence >= 0.7) {
       return deterministicResult;
     }
+
+    // Deterministic-only: caller wants the rule engine's answer and nothing else.
+    //
+    // Used after a batch analysis, where fixes for every issue already came back
+    // in one call and the per-issue pass exists only to recover the `_patchHint`
+    // metadata that the rule engine attaches. Without this flag that pass would
+    // fall through to a model on every issue whose deterministic confidence is
+    // below 0.7 — turning "one call for forty issues" back into forty calls.
+    if (config.deterministicOnly) return deterministicResult;
+
+    // A cached fix for this element shape — the same broken component repeated
+    // across a page is one problem, not forty. Skipped on a retry: the cache
+    // would hand back the very answer that just failed verification.
+    if (!attempts.length) {
+      const cached = this._cacheGet(issue);
+      if (cached) return { ...cached, source: `${cached.source || 'llm'} (cached)`, cached: true };
+    }
+
+    const cloudAllowed = this._cloudAllowed(config);
 
     if (!this._capabilities) {
       await this.detectCapabilities();
     }
 
-    const prompt = this._buildFixPrompt(issue, pageUrl);
+    const prompt = this._buildFixPrompt(issue, pageUrl, attempts);
+    const apiKey   = config.llmApiKey || config.geminiApiKey;
+    const provider = config.llmProvider || (apiKey ? 'gemini' : 'none');
+    const model    = config.llmModel || '';
 
-    // 1. Try window.ai (Chrome built-in)
-    if (this._capabilities.windowAI) {
-      try {
-        const result = await this._fixWithWindowAI(prompt);
-        if (result) return { ...result, source: 'window.ai', private: true };
-      } catch (e) {
-        console.warn('window.ai failed:', e.message);
-      }
-    }
+    const backends = this._backendOrder(deterministicResult.confidence, this._capabilities, cloudAllowed);
 
-    // 2. Try Gemini API
-    if (this._capabilities.gemini && config.geminiApiKey) {
+    for (const backend of backends) {
       try {
-        const result = await this._fixWithGemini(issue, pageUrl, config.geminiApiKey);
-        if (result) return { ...result, source: 'gemini', private: true };
-      } catch (e) {
-        console.warn('Gemini API failed:', e.message);
-      }
-    }
+        if (backend === 'windowAI') {
+          const result = await this._fixWithWindowAI(prompt);
+          if (result) {
+            const out = { ...result, source: 'window.ai', private: true };
+            this._cacheSet(issue, out);
+            return out;
+          }
+        }
 
-    // 3. Try localhost orchestrator
-    if (this._capabilities.localhost) {
-      try {
-        const serverUrl = config.localServerUrl || 'http://localhost:3000';
-        const result = await this._fixWithLocalhost(issue, pageUrl, serverUrl);
-        if (result) return { ...result, source: 'localhost', private: true };
+        if (backend === 'cloud' && apiKey && provider !== 'none') {
+          const result = await this._fixWithProvider(
+            issue, pageUrl, provider, model, apiKey, attempts, config.executeTool);
+          if (result) {
+            // A third-party host saw this payload — it is redacted, but not private.
+            const out = { ...result, source: provider, private: false };
+            this._cacheSet(issue, out);
+            return out;
+          }
+        }
+
+        if (backend === 'localhost') {
+          const serverUrl = config.localServerUrl || 'http://localhost:3000';
+          const result = await this._fixWithLocalhost(issue, pageUrl, serverUrl, attempts);
+          if (result) {
+            const out = { ...result, source: 'localhost', private: true };
+            this._cacheSet(issue, out);
+            return out;
+          }
+        }
       } catch (e) {
-        console.warn('localhost failed:', e.message);
+        console.warn(`[LLMRouter] ${backend} failed:`, e.message);
       }
     }
 
@@ -135,13 +528,16 @@ export class LLMRouter {
     // Build the full-page prompt
     const prompt = this._buildFullAnalysisPrompt(issues, pageUrl, designInfo);
 
-    // Try Gemini first (best context window for large prompts)
-    if (this._capabilities.gemini && config.geminiApiKey) {
+    // Try configured cloud LLM provider first
+    const apiKey   = config.llmApiKey || config.geminiApiKey;
+    const provider = config.llmProvider || (apiKey ? 'gemini' : 'none');
+    const model    = config.llmModel || '';
+    if (this._cloudAllowed(config) && this._capabilities.gemini && apiKey && provider !== 'none') {
       try {
-        const result = await this._fullAnalysisWithGemini(prompt, config.geminiApiKey);
-        if (result) return { ...result, source: 'gemini' };
+        const result = await this._fullAnalysisWithProvider(prompt, provider, model, apiKey);
+        if (result) return { ...result, source: provider, private: false };
       } catch (e) {
-        console.warn('[LLMRouter] Full analysis via Gemini failed:', e.message);
+        console.warn(`[LLMRouter] Full analysis via ${provider} failed:`, e.message);
       }
     }
 
@@ -151,10 +547,10 @@ export class LLMRouter {
         const session = await self.ai.languageModel.create({
           systemPrompt: 'You are an expert accessibility engineer. Respond with valid JSON only.'
         });
-        const response = await session.prompt(prompt);
+        const response = await this._promptWindowAI(session, prompt, FULL_ANALYSIS_SCHEMA);
         session.destroy();
         const result = this._parseFullAnalysisResponse(response);
-        if (result) return { ...result, source: 'window.ai' };
+        if (result) return { ...result, source: 'window.ai', private: true };
       } catch (e) {
         console.warn('[LLMRouter] Full analysis via window.ai failed:', e.message);
       }
@@ -172,7 +568,8 @@ export class LLMRouter {
         });
         if (r.ok) {
           const data = await r.json();
-          if (data.result) return { ...data.result, source: 'localhost' };
+          const normalized = normalizeFullAnalysis(data.result);
+          if (normalized) return { ...normalized, source: 'localhost', private: true };
         }
       } catch (e) {
         console.warn('[LLMRouter] Full analysis via localhost failed:', e.message);
@@ -213,7 +610,8 @@ ${issueList}
 For EACH violation above, provide a precise code fix using the actual HTML snippets provided.
 Also provide an overall analysis.
 
-Respond with ONLY this JSON structure (no markdown, no explanation outside JSON):
+Respond with ONLY this JSON structure (no markdown, no explanation outside JSON).
+Note that "fixes" is an ARRAY and each entry carries its own "ruleId":
 {
   "summary": "2-3 sentence plain-English summary of the page's accessibility state",
   "priority": ["ruleId1", "ruleId2"],
@@ -222,8 +620,9 @@ Respond with ONLY this JSON structure (no markdown, no explanation outside JSON)
     "shortTerm": ["fix Y"],
     "longTerm": ["improve Z"]
   },
-  "fixes": {
-    "<ruleId>": {
+  "fixes": [
+    {
+      "ruleId": "the axe rule id this fix addresses",
       "fixTitle": "short title",
       "before": "problematic HTML",
       "after": "fixed HTML",
@@ -231,52 +630,311 @@ Respond with ONLY this JSON structure (no markdown, no explanation outside JSON)
       "effort": "S|M|L",
       "confidence": 0.0
     }
-  }
+  ]
 }`;
   }
 
   /**
    * Call Gemini with the full-page prompt.
    */
-  async _fullAnalysisWithGemini(prompt, apiKey) {
-    const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
-    const r = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.4, maxOutputTokens: 8192 }
-      }),
-      signal: AbortSignal.timeout(60000)
+  async _fullAnalysisWithProvider(prompt, provider, model, apiKey) {
+    const parsed = await this._callProvider(provider, model, apiKey, prompt, {
+      temperature: 0.4,
+      maxTokens: 8192,
+      schema: FULL_ANALYSIS_SCHEMA,
+      schemaName: 'accessibility_page_analysis'
     });
-    if (!r.ok) throw new Error(`Gemini returned ${r.status}`);
-    const data = await r.json();
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) throw new Error('Empty Gemini response');
-    return this._parseFullAnalysisResponse(text);
+    return normalizeFullAnalysis(parsed);
+  }
+
+  /**
+   * Unified provider caller with native structured output.
+   *
+   * Every provider is given the schema in its own dialect, so the response is
+   * valid JSON of the right shape by construction rather than by parsing hope:
+   *   - Gemini    → responseMimeType + responseSchema
+   *   - OpenAI    → response_format: json_schema (strict)
+   *   - Anthropic → forced tool use (no response_format on this API)
+   *   - Mistral   → response_format: json_schema
+   *
+   * Returns a parsed object. Throws if the provider returned nothing usable.
+   */
+  async _callProvider(provider, model, apiKey, promptText, opts = {}) {
+    const temp      = opts.temperature ?? 0.7;
+    const maxTokens = opts.maxTokens   ?? 2048;
+    const timeout   = opts.timeout     ?? 30000;
+    const schema    = opts.schema     || FIX_SCHEMA;
+    const name      = opts.schemaName || 'accessibility_fix';
+    const system    = 'You are an expert accessibility engineer.';
+
+    // Instrumenting `post` itself, rather than every branch's return point,
+    // captures usage for every real network call in one place — including
+    // every round of the multi-turn tool loop below, which is more accurate
+    // than one estimate per top-level call.
+    const post = async (url, body, headers) => {
+      const bodyStr = JSON.stringify(body);
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...headers },
+        body: bodyStr,
+        signal: AbortSignal.timeout(timeout)
+      });
+      if (!r.ok) {
+        const e = await r.text();
+        throw new Error(`${provider} ${r.status}: ${e}`);
+      }
+      const json = await r.json();
+      this._recordUsage(provider, bodyStr.length, JSON.stringify(json).length);
+      return json;
+    };
+
+    if (provider === 'gemini') {
+      const m = model || 'gemini-2.5-flash';
+      const d = await post(
+        `https://generativelanguage.googleapis.com/v1beta/models/${m}:generateContent?key=${apiKey}`,
+        {
+          contents: [{ parts: [{ text: promptText }] }],
+          systemInstruction: { parts: [{ text: system }] },
+          generationConfig: {
+            temperature: temp,
+            maxOutputTokens: maxTokens,
+            responseMimeType: 'application/json',
+            responseSchema: toGeminiSchema(schema)
+          }
+        }
+      );
+      const text = d.candidates?.[0]?.content?.parts?.[0]?.text;
+      return this._parseStructured(text, provider);
+    }
+
+    if (provider === 'openai') {
+      const m = model || 'gpt-4o-mini';
+      const d = await post('https://api.openai.com/v1/chat/completions', {
+        model: m,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: promptText }
+        ],
+        max_tokens: maxTokens,
+        temperature: temp,
+        response_format: {
+          type: 'json_schema',
+          json_schema: { name, strict: true, schema: toStrictSchema(schema) }
+        }
+      }, { 'Authorization': `Bearer ${apiKey}` });
+      return this._parseStructured(d.choices?.[0]?.message?.content, provider);
+    }
+
+    if (provider === 'anthropic') {
+      const m = model || 'claude-3-5-haiku-20241022';
+      // The Messages API has no response_format — a forced tool call is the
+      // supported way to guarantee schema-valid output.
+      const d = await post('https://api.anthropic.com/v1/messages', {
+        model: m,
+        max_tokens: maxTokens,
+        temperature: temp,
+        system,
+        messages: [{ role: 'user', content: promptText }],
+        tools: [{ name, description: 'Return the result in this exact shape.', input_schema: schema }],
+        tool_choice: { type: 'tool', name }
+      }, { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' });
+
+      const toolUse = (d.content || []).find(c => c.type === 'tool_use');
+      if (toolUse?.input) return toolUse.input;   // already a parsed object
+      return this._parseStructured((d.content || []).find(c => c.type === 'text')?.text, provider);
+    }
+
+    if (provider === 'mistral') {
+      const m = model || 'mistral-small-latest';
+      const d = await post('https://api.mistral.ai/v1/chat/completions', {
+        model: m,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: promptText }
+        ],
+        max_tokens: maxTokens,
+        temperature: temp,
+        response_format: {
+          type: 'json_schema',
+          json_schema: { name, strict: true, schema: toStrictSchema(schema) }
+        }
+      }, { 'Authorization': `Bearer ${apiKey}` });
+      return this._parseStructured(d.choices?.[0]?.message?.content, provider);
+    }
+
+    throw new Error(`Unknown provider: ${provider}`);
+  }
+
+  /**
+   * Multi-turn tool loop: let the model inspect the page before answering.
+   *
+   * The final answer is itself a tool call (`submit_fix`), which keeps one
+   * mechanism across all four providers — the model calls inspection tools until
+   * it knows enough, then submits. Without that, each provider would need its own
+   * "are we done yet" heuristic.
+   *
+   * `executeTool(name, args)` runs a tool against the real page and resolves to a
+   * plain object. Returns the submitted fix, or null if the model never submitted
+   * within `maxRounds`.
+   */
+  async _callProviderWithTools(provider, model, apiKey, prompt, opts = {}) {
+    const { schema = FIX_SCHEMA, executeTool, maxRounds = 4, timeout = 45000 } = opts;
+    const tools = [...DOM_TOOLS, buildSubmitTool(schema)];
+    const system = 'You are an expert accessibility engineer. Inspect the page with the ' +
+                   'provided tools when the markup alone is ambiguous, then call submit_fix.';
+
+    const post = async (url, body, headers) => {
+      const bodyStr = JSON.stringify(body);
+      const r = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...headers },
+        body: bodyStr,
+        signal: AbortSignal.timeout(timeout)
+      });
+      if (!r.ok) throw new Error(`${provider} ${r.status}: ${await r.text()}`);
+      const json = await r.json();
+      this._recordUsage(provider, bodyStr.length, JSON.stringify(json).length);
+      return json;
+    };
+
+    /* ── Anthropic ── */
+    if (provider === 'anthropic') {
+      const messages = [{ role: 'user', content: prompt }];
+      const defs = tools.map(t => ({ name: t.name, description: t.description, input_schema: t.parameters }));
+
+      for (let round = 0; round < maxRounds; round++) {
+        const d = await post('https://api.anthropic.com/v1/messages', {
+          model: model || 'claude-3-5-haiku-20241022',
+          max_tokens: 2048, system, messages, tools: defs
+        }, { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' });
+
+        const calls = (d.content || []).filter(c => c.type === 'tool_use');
+        const submit = calls.find(c => c.name === SUBMIT_TOOL_NAME);
+        if (submit) return submit.input;
+        if (!calls.length) return this._parseStructured((d.content || []).find(c => c.type === 'text')?.text, provider);
+
+        messages.push({ role: 'assistant', content: d.content });
+        messages.push({
+          role: 'user',
+          content: await Promise.all(calls.map(async c => ({
+            type: 'tool_result',
+            tool_use_id: c.id,
+            content: JSON.stringify(await executeTool(c.name, c.input || {}))
+          })))
+        });
+      }
+      return null;
+    }
+
+    /* ── OpenAI and Mistral share the chat-completions tool shape ── */
+    if (provider === 'openai' || provider === 'mistral') {
+      const url = provider === 'openai'
+        ? 'https://api.openai.com/v1/chat/completions'
+        : 'https://api.mistral.ai/v1/chat/completions';
+      const defaultModel = provider === 'openai' ? 'gpt-4o-mini' : 'mistral-small-latest';
+      const messages = [{ role: 'system', content: system }, { role: 'user', content: prompt }];
+      const defs = tools.map(t => ({
+        type: 'function',
+        function: { name: t.name, description: t.description, parameters: toStrictSchema(t.parameters) }
+      }));
+
+      for (let round = 0; round < maxRounds; round++) {
+        const d = await post(url, {
+          model: model || defaultModel, messages, tools: defs, tool_choice: 'auto', max_tokens: 2048
+        }, { 'Authorization': `Bearer ${apiKey}` });
+
+        const message = d.choices?.[0]?.message;
+        const calls = message?.tool_calls || [];
+        if (!calls.length) return this._parseStructured(message?.content, provider);
+
+        const submit = calls.find(c => c.function?.name === SUBMIT_TOOL_NAME);
+        if (submit) return this._parseStructured(submit.function.arguments, provider);
+
+        messages.push(message);
+        for (const call of calls) {
+          let args = {};
+          try { args = JSON.parse(call.function.arguments || '{}'); } catch { /* malformed args */ }
+          messages.push({
+            role: 'tool',
+            tool_call_id: call.id,
+            content: JSON.stringify(await executeTool(call.function.name, args))
+          });
+        }
+      }
+      return null;
+    }
+
+    /* ── Gemini ── */
+    if (provider === 'gemini') {
+      const contents = [{ role: 'user', parts: [{ text: prompt }] }];
+      const declarations = tools.map(t => ({
+        name: t.name, description: t.description, parameters: toGeminiSchema(t.parameters)
+      }));
+
+      for (let round = 0; round < maxRounds; round++) {
+        const d = await post(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model || 'gemini-2.5-flash'}:generateContent?key=${apiKey}`,
+          {
+            contents,
+            systemInstruction: { parts: [{ text: system }] },
+            tools: [{ functionDeclarations: declarations }]
+          }
+        );
+
+        const parts = d.candidates?.[0]?.content?.parts || [];
+        const calls = parts.filter(p => p.functionCall).map(p => p.functionCall);
+        if (!calls.length) return this._parseStructured(parts.find(p => p.text)?.text, provider);
+
+        const submit = calls.find(c => c.name === SUBMIT_TOOL_NAME);
+        if (submit) return submit.args;
+
+        contents.push({ role: 'model', parts });
+        contents.push({
+          role: 'user',
+          parts: await Promise.all(calls.map(async c => ({
+            functionResponse: { name: c.name, response: await executeTool(c.name, c.args || {}) }
+          })))
+        });
+      }
+      return null;
+    }
+
+    throw new Error(`Unknown provider: ${provider}`);
+  }
+
+  /**
+   * Parse a structured-output response. Schema enforcement means this is plain
+   * JSON.parse in practice; the fence strip and balanced-brace scan only cover a
+   * provider that ignores its own schema directive.
+   */
+  _parseStructured(text, provider) {
+    if (!text) throw new Error(`Empty response from ${provider}`);
+    try {
+      return JSON.parse(text);
+    } catch {
+      const recovered = extractJsonObject(stripCodeFence(text));
+      if (recovered) return recovered;
+      throw new Error(`${provider} returned unparseable output`);
+    }
   }
 
   /**
    * Parse the full-analysis JSON response from the LLM.
    * Returns { summary, priority, actionPlan, fixes } or null.
    */
+  /**
+   * Parse a full-analysis response from a backend that cannot enforce a schema
+   * (on-device model, local server). Accepts both the array wire format and the
+   * legacy rule-ID-keyed object.
+   */
   _parseFullAnalysisResponse(text) {
     if (!text) return null;
-    let cleaned = text.trim().replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/\s*```$/i, '').trim();
+    const cleaned = stripCodeFence(text);
     try {
-      const parsed = JSON.parse(cleaned);
-      if (parsed && typeof parsed.fixes === 'object') return parsed;
+      return normalizeFullAnalysis(JSON.parse(cleaned));
     } catch {
-      // Try extracting first JSON block
-      const match = cleaned.match(/\{[\s\S]*\}/);
-      if (match) {
-        try {
-          const parsed = JSON.parse(match[0]);
-          if (parsed && typeof parsed.fixes === 'object') return parsed;
-        } catch { /* fall through */ }
-      }
+      return normalizeFullAnalysis(extractJsonObject(cleaned));
     }
-    return null;
   }
 
   /**
@@ -287,63 +945,62 @@ Respond with ONLY this JSON structure (no markdown, no explanation outside JSON)
       systemPrompt: 'You are an expert accessibility engineer. Respond with valid JSON only.'
     });
 
-    const response = await session.prompt(prompt);
+    const response = await this._promptWindowAI(session, prompt, FIX_SCHEMA);
     session.destroy();
 
     return this._parseFixResponse(response);
   }
 
   /**
+   * Prompt the on-device model, constraining output to the schema when the
+   * browser supports it. `responseConstraint` is only available in newer Chrome
+   * builds, so an unsupported-option error falls back to an unconstrained call.
+   */
+  async _promptWindowAI(session, prompt, schema) {
+    try {
+      return await session.prompt(prompt, { responseConstraint: schema });
+    } catch (e) {
+      console.warn('[LLMRouter] on-device schema constraint unavailable:', e.message);
+      return session.prompt(prompt);
+    }
+  }
+
+  /**
    * Use Gemini API
    */
-  async _fixWithGemini(issue, pageUrl, apiKey) {
-    const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
-    
-    const prompt = this._buildFixPrompt(issue, pageUrl);
-    
-    const requestBody = {
-      contents: [{
-        parts: [{
-          text: `You are an expert accessibility engineer. Analyze this accessibility issue and provide a fix in valid JSON format.\n\n${prompt}\n\nRespond with JSON only: { "fixTitle": "...", "before": "...", "after": "...", "explanation": "...", "effort": "S/M/L", "confidence": 0.0-1.0 }`
-        }]
-      }],
-      generationConfig: {
-        temperature: 0.7,
-        maxOutputTokens: 2048
+  async _fixWithProvider(issue, pageUrl, provider, model, apiKey, attempts = [], executeTool = null) {
+    const prompt = this._buildFixPrompt(issue, pageUrl, attempts);
+
+    // With a live page to inspect, let the model look before it answers. Falls
+    // back to the single-shot schema call if the tool loop ends without a
+    // submission, so a model that ignores the tools still produces a fix.
+    if (typeof executeTool === 'function') {
+      try {
+        const viaTools = await this._callProviderWithTools(provider, model, apiKey, prompt, {
+          schema: FIX_SCHEMA, executeTool
+        });
+        if (viaTools) return viaTools;
+        console.warn('[LLMRouter] tool loop ended without submit_fix — falling back to single-shot');
+      } catch (e) {
+        console.warn('[LLMRouter] tool loop failed, falling back to single-shot:', e.message);
       }
-    };
+    }
 
-    const r = await fetch(`${GEMINI_API_URL}?key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(requestBody),
-      signal: AbortSignal.timeout(30000)
+    // No JSON shape instructions needed in the prompt — the schema enforces it.
+    return this._callProvider(provider, model, apiKey, prompt, {
+      schema: FIX_SCHEMA,
+      schemaName: 'accessibility_fix'
     });
-
-    if (!r.ok) {
-      const errorText = await r.text();
-      throw new Error(`Gemini API returned ${r.status}: ${errorText}`);
-    }
-
-    const data = await r.json();
-    
-    // Extract text from Gemini response structure
-    const responseText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!responseText) {
-      throw new Error('Invalid Gemini API response structure');
-    }
-
-    return this._parseFixResponse(responseText);
   }
 
   /**
    * Use localhost orchestrator (/fix endpoint)
    */
-  async _fixWithLocalhost(issue, pageUrl, serverUrl) {
+  async _fixWithLocalhost(issue, pageUrl, serverUrl, attempts = []) {
     const r = await fetch(`${serverUrl}/fix`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ issue, url: pageUrl }),
+      body: JSON.stringify({ issue, url: pageUrl, attempts }),
       signal: AbortSignal.timeout(30000)
     });
 
@@ -373,7 +1030,7 @@ Respond with ONLY this JSON structure (no markdown, no explanation outside JSON)
    * Deterministic fixes — context-aware, using actual page HTML from axe-core.
    * Parses the real element HTML and generates precise before/after code.
    */
-  _deterministicFix(issue) {
+  _deterministicFix(issue, designInfo = null) {
     const ruleId = issue.id || '';
     const rawHtml = (issue.html?.[0] || '').trim();
     const selector = issue.selectors?.[0] || '';
@@ -518,27 +1175,32 @@ Respond with ONLY this JSON structure (no markdown, no explanation outside JSON)
       },
 
       'color-contrast': () => {
-        // Apply high-contrast inline styles that axe can detect
+        // Prefer a compliant pair from the page's OWN palette over black-on-white,
+        // which designers reject because it discards the brand.
         const before = rawHtml || '<span>text</span>';
-        const tag = getTag(before);
-        // Build an after with inline style for high contrast
-        let after = before;
+        const pair = pickAccessiblePair(designInfo);
+        const ratio = pair.ratio.toFixed(2);
+
         const existingStyle = getAttr(before, 'style') || '';
+        const contrastCss = `color: ${pair.fg}; background-color: ${pair.bg};`;
         const newStyle = existingStyle
-          ? existingStyle.replace(/;?\s*$/, '; color: #000000; background-color: #ffffff;')
-          : 'color: #000000; background-color: #ffffff;';
-        after = setAttr(before, 'style', newStyle);
+          ? existingStyle.replace(/;?\s*$/, `; ${contrastCss}`)
+          : contrastCss;
+        const after = setAttr(before, 'style', newStyle);
+
         return {
           fixTitle: 'Fix color contrast',
           before,
           after,
-          explanation: 'Applied high-contrast colors (black text on white background). Adjust the specific colors to match your design while maintaining a 4.5:1 contrast ratio.',
+          explanation: pair.fromBrand
+            ? `Applied ${pair.fg} on ${pair.bg} — both taken from this page's own palette — for a ${ratio}:1 ratio, clearing the 4.5:1 minimum while staying on brand.`
+            : `No pair in the detected palette reaches 4.5:1, so this falls back to black on white (${ratio}:1). Replace with brand colors that meet the ratio.`,
           effort: 'S',
-          confidence: 0.8,
+          confidence: pair.fromBrand ? 0.85 : 0.8,
           _patchHint: 'css',
           _cssChanges: [
-            { property: 'color', value: '#000000' },
-            { property: 'backgroundColor', value: '#ffffff' }
+            { property: 'color', value: pair.fg },
+            { property: 'backgroundColor', value: pair.bg }
           ]
         };
       },
@@ -942,8 +1604,23 @@ Respond with ONLY this JSON structure (no markdown, no explanation outside JSON)
     };
   }
 
-  _buildFixPrompt(issue, pageUrl) {
+  /**
+   * `attempts` are fixes that were applied to the real page, re-scanned, and
+   * found not to have cleared the violation. Feeding them back is what turns a
+   * one-shot suggestion into a loop that can actually converge — without them
+   * the model has no way to know it already tried something and it did not work.
+   */
+  _buildFixPrompt(issue, pageUrl, attempts = []) {
+    const history = attempts.length
+      ? `\nPREVIOUS ATTEMPTS THAT DID NOT WORK — the violation was still present after applying each of these. Do not repeat them; try a different approach:\n${
+          attempts.map((a, i) =>
+            `${i + 1}. ${a.fix?.fixTitle || 'attempt'}\n   applied: ${a.fix?.after || '(none)'}\n   result:  ${a.failure || 'violation still present after re-scan'}`
+          ).join('\n')
+        }\n`
+      : '';
+
     return `Given this accessibility issue, generate a minimal working code fix.
+${history}
 
 ISSUE:
 - Rule: ${issue.id || 'unknown'}
@@ -966,17 +1643,17 @@ Respond with ONLY a JSON object:
 }`;
   }
 
+  /**
+   * Parse a single-fix response from a backend that cannot enforce a schema.
+   * Providers go through `_parseStructured` instead.
+   */
   _parseFixResponse(text) {
     if (!text) return null;
-    let cleaned = text.trim().replace(/^```json?\s*/i, '').replace(/\s*```$/i, '').trim();
+    const cleaned = stripCodeFence(text);
     try {
       return JSON.parse(cleaned);
-    } catch (e) {
-      const match = cleaned.match(/\{[\s\S]*\}/);
-      if (match) {
-        try { return JSON.parse(match[0]); } catch (e2) { /* fall through */ }
-      }
-      return null;
+    } catch {
+      return extractJsonObject(cleaned);
     }
   }
 }

@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Northgate Cycles — Test Fixture</title>
+  <style>
+    :root { --ink:#16181d; --ground:#ffffff; --muted:#5b6068; --line:#e3e5e9; --accent:#1b5e8c; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--ground); color:var(--ink);
+           font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif; }
+    .wrap { max-width:52rem; margin:0 auto; padding:2.5rem 1.25rem 5rem; }
+    header { border-bottom:2px solid var(--ink); padding-bottom:1rem; margin-bottom:2rem; }
+    h1 { font-size:1.9rem; margin:0 0 .35rem; letter-spacing:-.02em; }
+    h2 { font-size:1.15rem; margin:2.25rem 0 .75rem; }
+    p { color:var(--muted); max-width:62ch; }
+    a { color:var(--accent); }
+    a:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:1.25rem; }
+    .card { border:1px solid var(--line); border-radius:10px; padding:1rem; }
+    .card img { width:100%; height:110px; object-fit:cover; border-radius:6px; background:#d7dbe0; }
+    .card h3 { font-size:1rem; margin:.65rem 0 .3rem; }
+    .card p { font-size:.9rem; margin:0 0 .6rem; }
+    form { display:flex; flex-direction:column; gap:.5rem; max-width:22rem; }
+    label { font-size:.85rem; font-weight:600; }
+    input { padding:.55rem .7rem; border:1px solid var(--line); border-radius:6px; font:inherit; }
+    button { padding:.6rem 1rem; border:0; border-radius:6px; background:var(--accent);
+             color:#fff; font:inherit; font-weight:600; cursor:pointer; }
+    footer { margin-top:3rem; padding-top:1rem; border-top:1px solid var(--line);
+             font-size:.85rem; color:var(--muted); }
+  </style>
+</head>
+<body>
+<div class="wrap">
+
+  <!--
+    TEST FIXTURE for SiteScope 360.
+
+    This page is deliberately built to PASS axe-core and Lighthouse accessibility
+    checks: it has a lang attribute, a title, one h1, landmark regions, labelled
+    form fields, alt text on every image, an accessible name on every link, and
+    text that meets 4.5:1 contrast.
+
+    It is nonetheless annoying to use with a screen reader, because the alt text
+    and link text are useless. Those are the problems the judgment layer exists
+    to find. Items marked CONTROL are correct and must NOT be flagged — if one of
+    them shows up in the results, that is a false positive worth fixing.
+  -->
+
+  <header>
+    <h1>Northgate Cycles</h1>
+    <p>Workshop notes, route guides and gear reviews.</p>
+  </header>
+
+  <main>
+    <h2>Latest guides</h2>
+    <div class="grid">
+
+      <!-- FLAG: alt text is a filename -->
+      <article class="card">
+        <img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
+             alt="IMG_4471.jpg">
+        <h3>Winter tyre pressures</h3>
+        <p>Getting grip without losing rolling speed.</p>
+        <!-- FLAG: vague link text, and one of three identical "Read more" links -->
+        <a href="/guides/winter-tyres">Read more</a>
+      </article>
+
+      <!-- FLAG: alt names the medium, not the content -->
+      <article class="card">
+        <img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
+             alt="image">
+        <h3>Rebuilding a rear hub</h3>
+        <p>A two-hour job with the right cone spanners.</p>
+        <!-- FLAG: same text as the other two, different destination -->
+        <a href="/guides/rear-hub">Read more</a>
+      </article>
+
+      <!-- CONTROL: genuinely descriptive alt text — must not be flagged -->
+      <article class="card">
+        <img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
+             alt="A steel touring bike loaded with panniers on a gravel track">
+        <h3>Packing for a week</h3>
+        <p>What we carry, and what we leave behind.</p>
+        <!-- FLAG: third identical "Read more" -->
+        <a href="/guides/packing">Read more</a>
+      </article>
+
+    </div>
+
+    <h2>Elsewhere</h2>
+    <p>
+      <!-- FLAG: "click here" -->
+      For our full workshop rates, <a href="/rates">click here</a>.
+      <!-- FLAG: raw URL read out character by character -->
+      Our supplier list lives at <a href="https://example.com/suppliers">https://example.com/suppliers</a>.
+      <!-- CONTROL: descriptive link containing the word "download" — must not be flagged -->
+      You can also <a href="/fitting-guide.pdf">download the 2026 frame fitting guide</a>.
+    </p>
+
+    <h2>Newsletter</h2>
+    <form action="/subscribe" method="post">
+      <!-- CONTROL: properly labelled field — axe and the judgment layer both pass this -->
+      <label for="email">Email address</label>
+      <input id="email" name="email" type="email" autocomplete="email">
+      <button type="submit">Subscribe</button>
+    </form>
+
+    <!-- CONTROL: decorative image with empty alt — deliberately skipped, not flagged -->
+    <img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
+         alt="" role="presentation" width="1" height="1">
+  </main>
+
+  <footer>
+    <p>Northgate Cycles, Unit 4, Northgate Yard. Open Tuesday to Saturday.</p>
+  </footer>
+
+</div>
+</body>
+</html>

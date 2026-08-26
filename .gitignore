@@ -59,12 +59,28 @@ playwright/.cache/
 *.temp
 .cache/
 
-# Large model files (if any)
+# Large model files
 *.bin
 *.gguf
 *.safetensors
 orchestrator/text-generation-webui/
 
-# Package manager locks (optional - uncomment if you want to ignore)
-# package-lock.json
-# yarn.lock
+# Runtime server files
+*.pid
+ui_server.log
+ui_server.pid
+ui-agent/*.log
+ui-agent/*.pid
+orchestrator/out.log
+
+# Screenshots / scan images
+orchestrator/artifacts/*.png
+orchestrator/artifacts/*.jpg
+
+# Local Python envs (should never be committed)
+orchestrator/venv/
+orchestrator/.venv/
+
+# Keys & secrets
+chrome-extension/lib/keys.js
+.env.remote.example

@@ -912,12 +912,12 @@
   /* ───────── Message handler ───────── */
 
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-    console.log('[Accea Scanner] Received message:', msg.type, msg);
+    console.log('[SiteScope 360 Scanner] Received message:', msg.type, msg);
 
     try {
       if (msg.type === 'highlight-issues') {
         const count = highlightIssues(msg.issues || []);
-        console.log('[Accea Scanner] Highlighted', count, 'issues');
+        console.log('[SiteScope 360 Scanner] Highlighted', count, 'issues');
         sendResponse({ ok: true, highlighted: count });
         return false;
       }
@@ -960,7 +960,7 @@
 
       if (msg.type === 'apply-patch') {
         const result = applyPatch(msg.change, msg.patchId);
-        console.log('[Accea Scanner] apply-patch result:', result);
+        console.log('[SiteScope 360 Scanner] apply-patch result:', result);
         sendResponse(result);
         return false;
       }
@@ -988,7 +988,7 @@
         return false;
       }
     } catch (err) {
-      console.error('[Accea Scanner] Error handling message:', msg.type, err);
+      console.error('[SiteScope 360 Scanner] Error handling message:', msg.type, err);
       sendResponse({ ok: false, error: err.message });
       return false;
     }
@@ -997,6 +997,21 @@
     return false;
   });
 
+  /* ───────── 4.2: SPA route-change poller ─────────
+     A plain URL poll rather than monkey-patching history.pushState: this script
+     runs in the isolated world, and patching pushState there does not intercept
+     the PAGE's own calls to it — the two JS realms don't share function
+     identity even though they share the DOM. Polling location.href is slower
+     but actually works, and reading it costs nothing at a low frequency. */
+  let lastSeenHref = location.href;
+  setInterval(() => {
+    if (location.href === lastSeenHref) return;
+    lastSeenHref = location.href;
+    try {
+      chrome.runtime.sendMessage({ action: 'ambient-route-changed', url: location.href });
+    } catch { /* extension context gone (page unloading) — ignore */ }
+  }, 1500);
+
   /* ───────── Init log ───────── */
-  console.log('[Accea Agent] Scanner content script loaded');
+  console.log('[SiteScope 360] Scanner content script loaded');
 })();

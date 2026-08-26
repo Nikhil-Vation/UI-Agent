@@ -1,5 +1,5 @@
 /**
- * Accea Agent Chrome Extension — Popup Controller V2
+ * SiteScope 360 Chrome Extension — Popup Controller V2
  * Enhanced with: Tabs, History, Export, Confetti, Filters,
  * Animated counters, Scan timer, Keyboard shortcuts
  */
@@ -29,6 +29,8 @@ const els = {
   breakdownRows:  $('#breakdown-rows'),
   scoreAttribution: $('#score-attribution'),
   lhLoadingHint:    $('#lh-loading-hint'),
+  lhScoresRow:      $('#lh-scores-row'),
+  lhRings:          $('#lh-rings'),
   scanTime:     $('#scan-time'),
   
   // Badges
@@ -56,7 +58,8 @@ const els = {
   btnUndoPatch:       $('#btn-undo-patch'),
   btnResetLivePreview:    $('#btn-reset-live-preview'),
   livePreviewPatchCount:  $('#live-preview-patch-count'),
-  livePreviewDomCount:    $('#live-preview-dom-count'),
+  livePreviewDomCount:      $('#live-preview-dom-count'),
+  livePreviewAvailableCount: $('#live-preview-available-count'),
   livePreviewPatchList:   $('#live-preview-patch-list'),
   
   // Tabs
@@ -106,12 +109,18 @@ const els = {
   lhTabEmpty:        $('#lh-tab-empty'),
   lhTabLoading:      $('#lh-tab-loading'),
   lhTabLoadingHint:  $('#lh-tab-loading-hint'),
+
+  // UX & Performance tab
+  uxpContent:        $('#uxp-content'),
+  uxpEmpty:          $('#uxp-empty'),
   
   // Settings
   settingPrivacy:       $('#setting-privacy'),
   settingCloud:         $('#setting-cloud'),
   settingServerUrl:     $('#setting-server-url'),
-  settingGeminiApiKey:  $('#setting-gemini-api-key'),
+  settingGeminiApiKey:  $('#setting-llm-api-key'),   // unified key field
+  settingLlmProvider:   $('#setting-llm-provider'),
+  settingLlmModel:      $('#setting-llm-model'),
   settingAutoHighlight: $('#setting-auto-highlight'),
   settingBadge:         $('#setting-badge'),
   settingPsApiKey:      $('#setting-ps-api-key'),
@@ -142,6 +151,11 @@ const els = {
   designTechSection:  $('#design-tech-section'),
   designUpgradesSection: $('#design-upgrades-section'),
   designTokensSection:$('#design-tokens-section'),
+  designAnalyticsSection: $('#design-analytics-section'),
+  designHostingSection:   $('#design-hosting-section'),
+  designTypeScaleSection: $('#design-typescale-section'),
+  designPageHealthSection:$('#design-pagehealth-section'),
+  designPageStatsSection: $('#design-pagestats-section'),
 
   // Tips tab
   tipsEmpty:         $('#tips-empty'),
@@ -355,7 +369,13 @@ function updatePlanBadge() {
   const cap = PLAN_CAPS[authPlan] || PLAN_CAPS.free;
   badge.textContent = cap.label;
   badge.className = `plan-badge plan-badge-${authPlan}`;
-  badge.classList.remove('hidden');
+
+  // The demo tier selector already displays the current tier. Showing the badge
+  // alongside it put two identical chips in the header, which read as a bug.
+  const tierSelect = document.getElementById('demo-tier-select');
+  const selectorVisible = tierSelect && !tierSelect.classList.contains('hidden');
+  badge.classList.toggle('hidden', !!selectorVisible);
+
   accountBtn?.classList.toggle('hidden', !authSession);
 }
 
@@ -525,6 +545,44 @@ async function clearExpiredCache() {
 /* ═══════ Lighthouse state ═══════ */
 let lighthouseData = null;
 let lighthouseLoading = false;
+let _lhProgressTimer = null;   // interval driving the fake progress bar
+let _lhProgressPct  = 0;       // current displayed percentage
+
+/** Start the animated LH fetch progress bar (fake-progress easing to ~88%). */
+function startLhProgressBar() {
+  clearInterval(_lhProgressTimer); // clear any stale timer first
+  _lhProgressPct = 0;
+
+  // Ease towards 88% over ~28s using diminishing increments
+  _lhProgressTimer = setInterval(() => {
+    const gap  = 88 - _lhProgressPct;
+    const step = Math.max(0.4, gap * 0.055);
+    _lhProgressPct = Math.min(88, _lhProgressPct + step);
+    const w      = `${_lhProgressPct.toFixed(1)}%`;
+    const pctTxt = `${Math.round(_lhProgressPct)}%`;
+
+    const miniF  = document.getElementById('lh-mini-fill');
+    const miniP  = document.getElementById('lh-mini-pct');
+    const status = document.getElementById('lh-fetch-status');
+    if (miniF) miniF.style.width = w;
+    if (miniP) miniP.textContent = pctTxt;
+    if (status) {
+      if      (_lhProgressPct >= 70) status.textContent = 'Almost there…';
+      else if (_lhProgressPct >= 40) status.textContent = 'Analysing…';
+      else if (_lhProgressPct >= 15) status.textContent = 'Running audits…';
+    }
+  }, 700);
+}
+
+/** Complete the LH progress bar — just stop the timer.
+ *  renderDashboardLhRings() called by the same code path will replace
+ *  the entire header HTML with the success/error state immediately after. */
+function completeLhProgressBar(success = true) {
+  clearInterval(_lhProgressTimer);
+  _lhProgressTimer = null;
+  _lhProgressPct   = 0;
+  // No DOM updates here — renderDashboardLhRings replaces the header HTML next.
+}
 
 /* ═══════ Suggestion cache (pre-fetched) ═══════ */
 const suggestionCache = new Map(); // key: issue.id, value: fix response
@@ -538,6 +596,12 @@ const livePreviewPatches = []; // Array of applied patches with undo info
 const LIVE_PREVIEW_CACHE_KEY = 'livePreviewPatches';
 const PATCHED_ISSUES_CACHE_KEY = 'patchedIssueIds';
 const patchedIssueIds = new Set(); // Track which issue IDs have been patched
+// Issues confirmed absent by a FRESH SCAN after patching. Deliberately separate
+// from patchedIssueIds: "we applied a patch" is not evidence that it worked, and
+// the evidence pack depends on that distinction being real.
+const verifiedIssueIds = new Set();
+// Judgment findings from the last scan, kept so the evidence record can include them.
+let lastJudgmentFindings = [];
 
 // Patch types
 const PATCH_TYPE = {
@@ -553,15 +617,16 @@ const PATCH_TYPE = {
 
 /* ═══════ Typewriter engine ═══════ */
 
+// Deliberately short and disciplined: outcome words the product is actually
+// working toward, not feature-marketing claims. The earlier list included
+// things like "SEO-Friendly" and "Lighthouse Ready" as if the tool itself
+// guarantees them each cycle — that reads as a tool marketing itself before
+// a viewer has seen it do anything. These three describe the goal, not a
+// capability claim, so cycling through them doesn't have that problem.
 const TYPEWRITER_PHRASES = [
   'Accessible',
-  'SEO-Friendly',
-  'Lighthouse Ready',
-  'Mobile Responsive',
-  'Lazy Load Ready',
+  'Usable',
   'Inclusive',
-  'WCAG Compliant',
-  'Privacy Safe',
 ];
 
 let _twTimer = null;
@@ -668,12 +733,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     lighthouseLoading = false;
     if (msg.error) {
       lighthouseData = { error: msg.error };
+      completeLhProgressBar(false);
     } else if (msg.data) {
       lighthouseData = msg.data;
+      completeLhProgressBar(true);
     }
-    els.lhLoadingHint?.classList.add('hidden');
     renderChecklistLighthouse();
     renderLighthouseTab();
+    renderDashboardLhRings();
+    renderUXPerfTab();
     upgradeScoreCardWithLighthouse();
   });
 
@@ -688,11 +756,26 @@ document.addEventListener('DOMContentLoaded', async () => {
           lighthouseData = cached.data;
           // Only render if a scan result is already showing
           if (!els.scoreCard.classList.contains('hidden')) {
-            els.lhLoadingHint?.classList.add('hidden');
+            els.lhLoadingHint?.classList.add('hidden'); // no bar was running, just hide
             renderChecklistLighthouse();
             renderLighthouseTab();
+            renderDashboardLhRings();
+            renderUXPerfTab();
             upgradeScoreCardWithLighthouse();
           }
+        } else if (cached?.status === 'fetching') {
+          // SW is still fetching — only enter loading state if we don't already have data
+          if (!lighthouseData) {
+            lighthouseLoading = true;
+            startLhProgressBar();
+          }
+          renderChecklistLighthouse();
+          renderLighthouseTab();
+          renderDashboardLhRings();
+          renderUXPerfTab();
+        } else if (!lighthouseData && currentAnalysis) {
+          // No cache, no active fetch, but we have a scan — kick it off now
+          fetchLighthouseScores();
         }
       }
     } catch { /* no cached data, that's fine */ }
@@ -712,6 +795,95 @@ document.addEventListener('DOMContentLoaded', async () => {
 /* ═══════ Event binding ═══════ */
 
 function bindEvents() {
+  // 3.8 — impairment simulation toggle
+  const impairmentSelect = document.getElementById('impairment-select');
+  // 4.2 — ambient scanning needs the optional notifications permission, and
+  // must never silently keep scanning after the user unchecks it.
+  const ambientToggle = document.getElementById('setting-ambient-scan');
+  ambientToggle?.addEventListener('change', async () => {
+    if (ambientToggle.checked) {
+      const granted = await chrome.permissions.request({ permissions: ['notifications'] }).catch(() => false);
+      if (!granted) {
+        showToast('Notifications permission is needed to alert on regressions');
+        ambientToggle.checked = false;
+        return;
+      }
+    }
+    await sendMessage({ action: 'save-settings', settings: { ambientScanEnabled: ambientToggle.checked } });
+    showToast(ambientToggle.checked ? 'Watching scanned pages for regressions' : 'Ambient scanning off');
+  });
+
+  // 4.3 — natural language control over the current scan's issue list
+  const chatInput  = document.getElementById('chat-input');
+  const chatSend   = document.getElementById('chat-send');
+
+  // 6.1 — client profiles (local only; stamps branding onto markdown exports)
+  initClientProfiles();
+
+  // 6.2 — team sync: portable export/import, no backend
+  document.getElementById('team-export-btn')?.addEventListener('click', exportTeamBundle);
+  document.getElementById('team-import-btn')?.addEventListener('click', () => {
+    document.getElementById('team-import-file')?.click();
+  });
+  document.getElementById('team-import-file')?.addEventListener('change', importTeamBundleFile);
+  document.getElementById('audit-clear-btn')?.addEventListener('click', async () => {
+    if (!confirm('Clear the local remediation change log? This cannot be undone.')) return;
+    await sendMessage({ action: 'audit-clear' });
+    showToast('Audit log cleared');
+  });
+
+  // 6.4 — refresh the estimated spend readout whenever settings opens.
+  document.getElementById('cost-meter-reset')?.addEventListener('click', async () => {
+    await sendMessage({ action: 'cost-reset' });
+    refreshCostMeter();
+  });
+  const chatStatus = document.getElementById('chat-status');
+
+  async function runChatCommand() {
+    const instruction = (chatInput?.value || '').trim();
+    if (!instruction) return;
+    if (!currentAnalysis?.issues?.length) { showToast('Run a scan first'); return; }
+
+    chatStatus.classList.remove('hidden');
+    chatStatus.textContent = 'Thinking…';
+    chatSend.disabled = true;
+
+    let res;
+    try {
+      res = await sendMessage({ action: 'chat-command', instruction, issues: currentAnalysis.issues });
+    } catch (e) {
+      chatStatus.textContent = e.message || 'Could not interpret that';
+      chatSend.disabled = false;
+      return;
+    }
+    chatSend.disabled = false;
+
+    if (!res?.ok) { chatStatus.textContent = res?.error || 'Could not interpret that'; return; }
+
+    const { plan, matchedIssueIds } = res;
+    const matchedSet = new Set(matchedIssueIds || []);
+    chatStatus.textContent = `${plan.summary || 'Understood.'} Matched ${matchedSet.size} issue${matchedSet.size === 1 ? '' : 's'}.`;
+
+    // "list" just highlights what matched — filter the visible cards to it.
+    document.querySelectorAll('#issues-list .issue-card').forEach(card => {
+      card.classList.toggle('chat-dimmed', !matchedSet.has(card.dataset.issueId));
+    });
+
+    if (plan.action === 'apply' && matchedSet.size) {
+      const targets = currentAnalysis.issues.filter(i => matchedSet.has(i.id));
+      await applyFilteredIssues(targets);
+    }
+  }
+
+  chatSend?.addEventListener('click', runChatCommand);
+  chatInput?.addEventListener('keydown', (e) => { if (e.key === 'Enter') runChatCommand(); });
+
+  impairmentSelect?.addEventListener('change', async () => {
+    try {
+      await sendMessage({ action: 'impairment-apply', tabId: currentTabId, key: impairmentSelect.value || null });
+    } catch { showToast('Could not apply simulation'); }
+  });
+
   els.btnScan.addEventListener('click', handleScan);
   els.btnSettings.addEventListener('click', showSettings);
   els.btnBack.addEventListener('click', hideSettings);
@@ -783,6 +955,22 @@ function bindEvents() {
     input.addEventListener('change', saveCurrentSettings);
   });
   els.settingServerUrl.addEventListener('blur', saveCurrentSettings);
+
+  // Provider change → rebuild model dropdown + clear status
+  if (els.settingLlmProvider) {
+    els.settingLlmProvider.addEventListener('change', () => {
+      updateLlmProviderUI(els.settingLlmProvider.value);
+      document.getElementById('llm-key-status').textContent = '';
+    });
+  }
+
+  // Validate key on blur
+  els.settingGeminiApiKey.addEventListener('blur', () => {
+    const provider = els.settingLlmProvider?.value || 'gemini';
+    const model    = els.settingLlmModel?.value || '';
+    const key      = (els.settingGeminiApiKey.value || '').trim();
+    validateLlmKey(provider, key, model);
+  });
 
   // Privacy mode controls cloud opt-in
   els.settingPrivacy.addEventListener('change', () => {
@@ -955,6 +1143,7 @@ function switchTab(tabName) {
   if (tabName === 'checklist') renderChecklist();
   if (tabName === 'design') renderDesignTab();
   if (tabName === 'lighthouse') renderLighthouseTab();
+  if (tabName === 'ux-perf') renderUXPerfTab();
 
   // Show/hide paywall overlay on pro-gated tabs
   refreshTabPaywalls();
@@ -1364,6 +1553,165 @@ function renderDesignTab() {
   } else {
     els.designTokensSection.innerHTML = '';
   }
+
+  // ── 7. Page Health (SEO signals) ──
+  const seo = d.seoSignals || {};
+  if (Object.keys(seo).length) {
+    const signals = [
+      { label: 'HTTPS',         ok: seo.hasHTTPS,      tip: 'Page is served over a secure connection' },
+      { label: 'Meta desc',     ok: seo.hasDescription, tip: 'Page has a meta description for search snippets' },
+      { label: 'Canonical',     ok: seo.hasCanonical,   tip: seo.canonical || 'Canonical URL declared' },
+      { label: 'Lang attr',     ok: seo.hasLang,        tip: 'html[lang] set — required for screen readers' },
+      { label: 'Viewport',      ok: seo.hasViewport,    tip: 'Viewport meta tag present — enables responsive layout' },
+      { label: 'OG image',      ok: seo.hasOgImage,     tip: seo.ogImage || 'Open Graph image for social sharing' },
+      { label: 'CSP',           ok: seo.csp,            tip: 'Content Security Policy meta tag present' },
+    ];
+    const ogImg = seo.ogImage;
+    els.designPageHealthSection.innerHTML = `
+      <div class="di-card">
+        <div class="di-card-header">
+          <span class="di-card-title">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+            Page Health
+          </span>
+          <span class="di-badge" style="background:${signals.filter(s=>s.ok).length===signals.length?'var(--green)18':'var(--orange)18'};color:${signals.filter(s=>s.ok).length===signals.length?'var(--green)':'var(--orange)'}">
+            ${signals.filter(s=>s.ok).length}/${signals.length}
+          </span>
+        </div>
+        ${ogImg ? `<div class="di-og-preview"><img src="${escHtml(ogImg)}" alt="OG image" onerror="this.parentNode.style.display='none'"><span class="di-og-label">og:image</span></div>` : ''}
+        <div class="di-health-grid">
+          ${signals.map(s => `
+            <div class="di-health-item ${s.ok ? 'ok' : 'fail'}" title="${escHtml(s.tip)}">
+              <span class="di-health-dot"></span>
+              <span class="di-health-label">${escHtml(s.label)}</span>
+            </div>`).join('')}
+        </div>
+        ${seo.structuredData?.length ? `
+          <div class="di-health-extra">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+            Structured data: ${seo.structuredData.map(t => escHtml(t)).join(', ')}
+          </div>` : ''}
+        ${seo.robotsMeta ? `<div class="di-health-extra">🤖 robots: <code>${escHtml(seo.robotsMeta)}</code></div>` : ''}
+      </div>`;
+  } else {
+    els.designPageHealthSection.innerHTML = '';
+  }
+
+  // ── 8. Analytics & Tracking ──
+  const analyticsItems = tech.filter(t => t.category === 'Analytics');
+  if (analyticsItems.length) {
+    els.designAnalyticsSection.innerHTML = `
+      <div class="di-card">
+        <div class="di-card-header">
+          <span class="di-card-title">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+            Analytics & Tracking
+          </span>
+          <span class="di-badge">${analyticsItems.length}</span>
+        </div>
+        <div class="di-inline-chips">
+          ${analyticsItems.map(t => {
+            const col = TECH_COLORS[t.name] || 'rgba(255,255,255,0.18)';
+            return `<span class="di-chip-pill" style="--c:${col}">${escHtml(t.name)}</span>`;
+          }).join('')}
+        </div>
+        ${analyticsItems.some(t => ['Meta Pixel','Hotjar'].includes(t.name)) ? `
+          <div class="di-health-extra" style="color:var(--orange)">
+            ⚠️ User-tracking pixels detected — ensure your privacy policy is up to date
+          </div>` : ''}
+      </div>`;
+  } else {
+    els.designAnalyticsSection.innerHTML = '';
+  }
+
+  // ── 9. Hosting & Infrastructure ──
+  const hostItems    = tech.filter(t => t.category === 'Hosting');
+  const buildItems   = tech.filter(t => t.category === 'Build');
+  if (hostItems.length || buildItems.length) {
+    const mkChips = (items) => items.map(t => {
+      const col = TECH_COLORS[t.name] || 'rgba(255,255,255,0.18)';
+      return `<span class="di-chip-pill" style="--c:${col}">${escHtml(t.name)}</span>`;
+    }).join('');
+    els.designHostingSection.innerHTML = `
+      <div class="di-card">
+        <div class="di-card-header">
+          <span class="di-card-title">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+            Hosting & Build
+          </span>
+          <span class="di-badge">${hostItems.length + buildItems.length}</span>
+        </div>
+        ${hostItems.length ? `<div class="di-infra-row"><span class="di-infra-label">Hosting</span><div class="di-inline-chips">${mkChips(hostItems)}</div></div>` : ''}
+        ${buildItems.length ? `<div class="di-infra-row"><span class="di-infra-label">Build</span><div class="di-inline-chips">${mkChips(buildItems)}</div></div>` : ''}
+      </div>`;
+  } else {
+    els.designHostingSection.innerHTML = '';
+  }
+
+  // ── 10. Typography Scale ──
+  const typeSizes = d.typeSizes || [];
+  if (typeSizes.length) {
+    els.designTypeScaleSection.innerHTML = `
+      <div class="di-card">
+        <div class="di-card-header">
+          <span class="di-card-title">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
+            Type Scale
+          </span>
+          <span class="di-badge">${typeSizes.length} sizes</span>
+        </div>
+        <div class="di-typescale-list">
+          ${typeSizes.map((sz, i) => {
+            const px = parseFloat(sz);
+            const previewSz = Math.max(10, Math.min(px, 28));
+            return `
+              <div class="di-typescale-row">
+                <span class="di-typescale-sample" style="font-size:${previewSz}px">Aa</span>
+                <span class="di-typescale-val">${sz}</span>
+                ${i === 0 ? '<span class="di-typescale-tag">largest</span>' : i === typeSizes.length - 1 ? '<span class="di-typescale-tag">smallest</span>' : ''}
+              </div>`;
+          }).join('')}
+        </div>
+      </div>`;
+  } else {
+    els.designTypeScaleSection.innerHTML = '';
+  }
+
+  // ── 11. Page Stats ──
+  const ps = d.pageStats || {};
+  if (Object.keys(ps).length) {
+    const stats = [
+      { icon: '🖼', label: 'Images',        val: ps.images,       sub: ps.lazyImages ? `${ps.lazyImages} lazy` : '' },
+      { icon: '⚙️', label: 'Scripts',       val: ps.scripts       },
+      { icon: '🎨', label: 'Stylesheets',   val: ps.stylesheets   },
+      { icon: '🔗', label: 'Links',         val: ps.links,        sub: ps.externalLinks ? `${ps.externalLinks} ext` : '' },
+      { icon: '📐', label: 'DOM nodes',     val: ps.domNodes,     sub: ps.domNodes > 1500 ? '⚠ large DOM' : '' },
+      { icon: '📝', label: 'Forms',         val: ps.forms         },
+      { icon: '🔘', label: 'Buttons',       val: ps.buttons       },
+      { icon: '📑', label: 'Headings',      val: ps.headings,     sub: ps.h1Count !== 1 ? `⚠ ${ps.h1Count} H1s` : '1 H1 ✓' },
+      { icon: '🪟', label: 'iFrames',       val: ps.iframes       },
+    ].filter(s => s.val !== undefined);
+    els.designPageStatsSection.innerHTML = `
+      <div class="di-card">
+        <div class="di-card-header">
+          <span class="di-card-title">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+            Page Stats
+          </span>
+        </div>
+        <div class="di-pagestats-grid">
+          ${stats.map(s => `
+            <div class="di-pagestat-item">
+              <span class="di-pagestat-icon">${s.icon}</span>
+              <span class="di-pagestat-val">${s.val}</span>
+              <span class="di-pagestat-label">${escHtml(s.label)}</span>
+              ${s.sub ? `<span class="di-pagestat-sub ${s.sub.includes('⚠') ? 'warn' : ''}">${escHtml(s.sub)}</span>` : ''}
+            </div>`).join('')}
+        </div>
+      </div>`;
+  } else {
+    els.designPageStatsSection.innerHTML = '';
+  }
 }
 
 /* ═══════ Severity filter ═══════ */
@@ -1512,6 +1860,200 @@ async function applyPatch(issue, fix, { skipVerify = false } = {}) {
 }
 
 /**
+ * Confidence gate (mirrors autonomyFor in lib/llm-router.js, which the popup
+ * cannot import — it is a classic script, not a module).
+ *   >= 0.9  apply without asking
+ *   >= 0.7  apply, but flag for review
+ *   below   propose only; never touch the page
+ */
+async function refreshCostMeter() {
+  const amountEl = document.getElementById('cost-meter-amount');
+  if (!amountEl) return;
+  try {
+    const res = await sendMessage({ action: 'cost-get' });
+    if (res?.ok) amountEl.textContent = res.formatted;
+  } catch { /* non-critical display */ }
+}
+
+function autonomyFor(fix) {
+  const c = typeof fix?.confidence === 'number' ? fix.confidence : 0;
+  if (c >= 0.9) return 'auto';
+  if (c >= 0.7) return 'flag';
+  return 'propose';
+}
+
+/**
+ * Record one immutable fact about what was done to the page.
+ *
+ * Fire-and-forget: a failure to write the log must never block or fail the fix
+ * the user asked for. The log is a record of work, not a gate on it.
+ */
+function recordAudit(event, issue, fix, extra = {}) {
+  try {
+    sendMessage({
+      action: 'audit-append',
+      entry: {
+        event,
+        issueId: issue?.id,
+        ruleId: issue?.ruleId || issue?.id || '',
+        pageUrl: currentAnalysis?.metadata?.url || '',
+        summary: fix?.fixTitle || '',
+        source: fix?.source || '',
+        confidence: typeof fix?.confidence === 'number' ? fix.confidence : null,
+        autonomy: fix ? autonomyFor(fix) : '',
+        ...extra
+      }
+    });
+  } catch { /* logging must never break remediation */ }
+}
+
+/**
+ * Crawl the current site.
+ *
+ * Permissions are requested here rather than declared up front: most users never
+ * crawl, and a broad host-permission prompt at install is the single biggest
+ * driver of abandonment for an extension whose pitch is privacy.
+ */
+async function runSiteCrawl() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  let origin;
+  try { origin = new URL(tab.url).origin; }
+  catch { showToast('Open a website first'); return; }
+
+  const granted = await chrome.permissions.request({
+    permissions: ['tabs'],
+    origins: [`${origin}/*`]
+  }).catch(() => false);
+  if (!granted) { showToast('Site scanning needs permission for this site'); return; }
+
+  showToast('Looking for a sitemap…');
+  const found = await sendMessage({ action: 'crawl-discover', origin, limit: 25 });
+  const urls = found?.urls || [];
+  if (!urls.length) { showToast('No sitemap found for this site'); return; }
+
+  showToast(`Scanning ${urls.length} pages — this runs in background tabs`, 4000);
+  const res = await sendMessage({ action: 'crawl-scan', urls });
+  const sum = res?.summary;
+  if (!sum) { showToast('Crawl failed'); return; }
+
+  downloadFile(brand(renderCrawlReport(sum)), `site-scan-${new Date().toISOString().slice(0,10)}.md`, 'text/markdown');
+  showToast(`Scanned ${sum.pagesScanned} pages · ${sum.totals.issues} issues`);
+}
+
+function renderCrawlReport(s) {
+  const lines = [
+    '# Site accessibility scan', '',
+    `Pages scanned: ${s.pagesScanned}`,
+    `Pages that could not be scanned: ${s.pagesFailed}`,
+    s.averageScore !== null ? `Average score: ${s.averageScore}/100` : '',
+    `Total issues: ${s.totals.issues} (critical ${s.totals.critical}, serious ${s.totals.serious}, moderate ${s.totals.moderate}, minor ${s.totals.minor})`,
+    '', '## Most widespread problems', '',
+    'A rule failing across many pages is usually one systemic fix, not many separate ones.', ''
+  ];
+  for (const r of s.commonRules) lines.push(`- **${r.ruleId}** — on ${r.pageCount} page${r.pageCount > 1 ? 's' : ''}`);
+  lines.push('', '## Pages needing most attention', '');
+  for (const p of s.worstPages) lines.push(`- ${p.url} — ${p.issueCount} issues${p.critical ? ` (${p.critical} critical)` : ''}`);
+  if (s.failed.length) {
+    lines.push('', '## Not scanned', '');
+    for (const f of s.failed) lines.push(`- ${f.url} — ${f.error}`);
+  }
+  lines.push('', 'Automated testing covers roughly a third of WCAG success criteria. This is a record of what was checked automatically, not a conformance statement.');
+  return lines.filter(l => l !== '').join('\n');
+}
+
+/* ═══════ Self-verifying remediation loop ═══════ */
+
+/** Does this rule still appear in a verified analysis? */
+function _ruleStillPresent(analysis, issue) {
+  const target = issue.ruleId || issue.id;
+  return (analysis?.issues || []).some(i => (i.ruleId || i.id) === target);
+}
+
+/**
+ * Fix one issue and prove it worked.
+ *
+ *   generate → apply → re-scan → cleared?  ─ yes ─▶ done
+ *                                   │
+ *                                   no
+ *                                   ▼
+ *                        undo, tell the model what failed, retry
+ *
+ * Every primitive here already existed and was driven by hand. The loop is what
+ * turns "here is a suggestion" into "31 of 34 fixed, and here is why the rest
+ * need a person". A failed attempt is undone before the next one so attempts
+ * never stack on top of each other.
+ *
+ * Returns { ok, fix, attempts, reason }.
+ */
+async function remediateIssue(issue, { maxAttempts = 3, onProgress = null } = {}) {
+  const pageUrl = currentAnalysis?.metadata?.url || '';
+  const attempts = [];
+
+  for (let n = 1; n <= maxAttempts; n++) {
+    onProgress?.({ phase: 'generating', attempt: n, maxAttempts });
+
+    let response;
+    try {
+      response = await sendMessage({
+        action: 'fix',
+        issue,
+        pageUrl,
+        tabId: currentTabId,
+        designInfo: currentAnalysis?.designInfo || null,
+        attempts
+      });
+    } catch (err) {
+      return { ok: false, attempts, reason: `Could not generate a fix: ${err.message}` };
+    }
+
+    const fix = response?.ok ? response.fix : null;
+    if (!fix || !fix.after) {
+      return { ok: false, attempts, reason: 'No code fix could be generated for this issue.' };
+    }
+
+    onProgress?.({ phase: 'applying', attempt: n, maxAttempts, fix });
+    await applyPatch(issue, fix, { skipVerify: true });
+    recordAudit('applied', issue, fix);
+
+    // Let DOM mutations settle before axe reads the tree again.
+    await new Promise(r => setTimeout(r, 300));
+
+    onProgress?.({ phase: 'verifying', attempt: n, maxAttempts, fix });
+    let verify;
+    try {
+      verify = await sendMessage({ action: 'verify-patches', tabId: currentTabId });
+    } catch (err) {
+      return { ok: false, attempts, reason: `Could not verify the fix: ${err.message}` };
+    }
+
+    if (!verify?.ok || !verify.analysis) {
+      return { ok: false, attempts, reason: verify?.error || 'Verification did not return a result.' };
+    }
+
+    if (!_ruleStillPresent(verify.analysis, issue)) {
+      onProgress?.({ phase: 'verified', attempt: n, maxAttempts, fix });
+      verifiedIssueIds.add(issue.id);
+      suggestionCache.set(issue.id, fix);
+      recordAudit('verified', issue, fix, { attempts: attempts.length + 1 });
+      return { ok: true, fix, attempts: attempts.length + 1, verified: true };
+    }
+
+    // Still failing — roll back so the next attempt starts from a clean page.
+    onProgress?.({ phase: 'retrying', attempt: n, maxAttempts, fix });
+    recordAudit('failed', issue, fix, { attempts: attempts.length + 1 });
+    await undoLastPatch();
+    recordAudit('undone', issue, fix);
+    attempts.push({ fix, failure: 'the violation was still reported after re-scanning' });
+  }
+
+  return {
+    ok: false,
+    attempts,
+    reason: `Tried ${attempts.length} different fixes; the violation was still reported each time. This one needs a person.`
+  };
+}
+
+/**
  * Verify patched score — lightweight re-run of axe on the patched DOM.
  * Updates the score card in-place so the user can see the improvement.
  */
@@ -1529,34 +2071,79 @@ async function verifyPatchedScore() {
       throw new Error(response?.error || 'Verify failed');
     }
 
-    const oldScore = currentAnalysis?.auditScore || 0;
-    const newScore = response.analysis.auditScore || 0;
-    const delta = newScore - oldScore;
+    // oldAxeScore = the raw axe score from the last scan/verify
+    const oldAxeScore = currentAnalysis?.auditScore || 0;
+    // originalAxeScore = the very first scan — never changes across multiple verifies
+    const originalAxeScore = currentAnalysis?._originalAxeScore ?? oldAxeScore;
+    const newAxeScore = response.analysis.auditScore || 0;
+    const axeDelta = newAxeScore - oldAxeScore; // improvement vs last state
+
+    // ── REGRESSION GUARD ──────────────────────────────────────────────────────
+    // Compare against the ORIGINAL scan baseline so repeated verifies don't
+    // accumulate errors. If the new axe score is worse than the very first scan,
+    // the patch introduced real new violations — auto-undo it.
+    if (newAxeScore < originalAxeScore) {
+      showToast(
+        `⚠️ Patch introduced new violations (axe: ${originalAxeScore} → ${newAxeScore}). Auto-undoing…`,
+        4000
+      );
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Verify Score`;
+      }
+      await undoLastPatch();
+      return;
+    }
+    // ── END REGRESSION GUARD ──────────────────────────────────────────────────
 
     // Capture old issue IDs before overwriting currentAnalysis
     const oldIssueIds = new Set((currentAnalysis?.issues || []).map(i => i.id));
 
-    // Update internal state (keep designInfo from original scan)
+    // Preserve metadata across verify
     const designInfo = currentAnalysis?.designInfo || null;
+    const lockedOriginalAxeScore = originalAxeScore; // keep across overwrite
     currentAnalysis = response.analysis;
     currentAnalysis.designInfo = designInfo;
+    currentAnalysis._originalAxeScore = lockedOriginalAxeScore; // never reset until rescan
 
-    // Animate the score change
-    animateCounter(els.scoreNumber, oldScore, newScore, 600);
+    // Any patched issue that is absent from this fresh scan is now *proven* fixed,
+    // not merely edited. This is the only place verification is granted.
+    const stillPresent = new Set((currentAnalysis.issues || []).map(i => i.id));
+    for (const id of oldIssueIds) {
+      if (!stillPresent.has(id) && patchedIssueIds.has(id)) {
+        verifiedIssueIds.add(id);
+        recordAudit('verified', { id, ruleId: id }, suggestionCache.get(id));
+      }
+    }
+
+    // ── SCORE DISPLAY ─────────────────────────────────────────────────────────
+    // The displayed score may be the Lighthouse-upgraded value (e.g. 71) while
+    // the raw axe score is lower (e.g. 49). Animating 71→53 looks like a drop
+    // even when the patch improved things. Instead, shift the DISPLAYED score
+    // by the same delta as the axe improvement so the visual always moves in
+    // the right direction.
+    const displayedScore = parseInt(els.scoreNumber.textContent, 10) || oldAxeScore;
+    const newDisplayedScore = Math.max(0, Math.min(100, displayedScore + axeDelta));
+    animateCounter(els.scoreNumber, displayedScore, newDisplayedScore, 600);
 
     setTimeout(() => {
-      els.scoreArc.setAttribute('stroke-dasharray', `${newScore}, 100`);
+      els.scoreArc.setAttribute('stroke-dasharray', `${newDisplayedScore}, 100`);
     }, 50);
 
-    // Score color
-    if (newScore >= 90) els.scoreArc.style.stroke = 'var(--green)';
-    else if (newScore >= 70) els.scoreArc.style.stroke = 'var(--orange)';
+    // Score color — based on displayed value (which may be Lighthouse-based)
+    if (newDisplayedScore >= 90) els.scoreArc.style.stroke = 'var(--green)';
+    else if (newDisplayedScore >= 70) els.scoreArc.style.stroke = 'var(--orange)';
     else els.scoreArc.style.stroke = 'var(--red)';
 
     // Grade
-    const grade = getGrade(newScore);
+    const grade = getGrade(newDisplayedScore, currentAnalysis?.counts);
     els.scoreGrade.textContent = grade.label;
     els.scoreGrade.className = `score-grade ${grade.class}`;
+
+    // Source badge
+    els.scoreSource.textContent = lighthouseData?.accessibility ? '✦ Lighthouse (patched)' : 'axe-core (patched)';
+    els.scoreSource.className = `score-source ${lighthouseData?.accessibility ? 'lighthouse' : 'axe'}`;
+    els.scoreSource.classList.remove('hidden');
 
     // Summary text
     const total = response.analysis.totalViolations || 0;
@@ -1576,14 +2163,12 @@ async function verifyPatchedScore() {
     els.badgeMinor.textContent = `${counts.minor || 0} Minor`;
 
     // Score breakdown
-    renderScoreBreakdown(newScore, null);
+    renderScoreBreakdown(newAxeScore, null);
 
     // ── Re-render the issue list with the updated analysis ──
-    // Compare old issues vs new to find which were resolved
     const newIssueIds = new Set((response.analysis.issues || []).map(i => i.id));
     const resolvedIds = [...oldIssueIds].filter(id => !newIssueIds.has(id));
 
-    // Re-render issue list from the fresh analysis
     const newIssues = currentAnalysis.issues || [];
     els.issueCount.textContent = `(${newIssues.length})`;
     els.issuesList.innerHTML = '';
@@ -1594,23 +2179,21 @@ async function verifyPatchedScore() {
           <div class="no-issues-text">All Issues Fixed!</div>
           <div class="no-issues-sub">No accessibility issues remaining</div>
         </li>`;
-      launchConfetti();
+      // (celebration animation removed — this is a compliance tool)
     } else {
       newIssues.forEach((issue, idx) => {
         els.issuesList.appendChild(createIssueCard(issue, idx));
       });
     }
 
-    // Show improvement toast
+    // Toast — reference displayed score delta so it matches what the user sees
     const resolvedMsg = resolvedIds.length > 0 ? ` · ${resolvedIds.length} issue${resolvedIds.length !== 1 ? 's' : ''} resolved` : '';
-    if (delta > 0) {
-      showToast(`🎉 Score improved: ${oldScore} → ${newScore} (+${delta})${resolvedMsg}`);
-    } else if (delta === 0 && resolvedIds.length > 0) {
-      showToast(`Score ${newScore}${resolvedMsg}`);
-    } else if (delta === 0) {
-      showToast(`Score unchanged at ${newScore}. Try applying more fixes.`);
+    if (axeDelta > 0) {
+      showToast(`🎉 Score improved: ${displayedScore} → ${newDisplayedScore} (+${axeDelta})${resolvedMsg}`);
+    } else if (axeDelta === 0 && resolvedIds.length > 0) {
+      showToast(`✓ ${resolvedIds.length} issue${resolvedIds.length !== 1 ? 's' : ''} resolved — score maintained at ${newDisplayedScore}${resolvedMsg}`);
     } else {
-      showToast(`Score: ${oldScore} → ${newScore} (${delta})${resolvedMsg}`);
+      showToast(`Score unchanged at ${newDisplayedScore}. Try applying more fixes.`);
     }
 
     if (btn) {
@@ -2195,6 +2778,56 @@ async function resetLivePreview() {
  * Apply All Patches — batch-apply all AI suggestions at once.
  * If an issue doesn't have a cached suggestion, generate one on the fly.
  */
+/**
+ * Apply-all, scoped to a specific subset of issues rather than the whole scan.
+ * Shares the exact same generate/confidence-gate/apply logic as "Apply All" —
+ * a chat instruction like "fix everything critical" must be trusted exactly as
+ * much as clicking the button, not more.
+ */
+async function applyFilteredIssues(issues) {
+  if (!issues?.length) { showToast('Nothing matched that instruction'); return; }
+
+  let applied = 0, failed = 0, generated = 0, flagged = 0, proposed = 0;
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const pageUrl = tab?.url || '';
+
+  for (const issue of issues) {
+    if (patchedIssueIds.has(issue.id)) continue;
+    let fix = suggestionCache.get(issue.id);
+    if (!fix) {
+      try {
+        const response = await sendMessage({
+          action: 'fix', issue, pageUrl, tabId: currentTabId,
+          designInfo: currentAnalysis?.designInfo || null
+        });
+        if (response?.ok && response.fix) { fix = response.fix; suggestionCache.set(issue.id, fix); generated++; }
+      } catch { /* continue to next issue */ }
+    }
+    if (!fix) { failed++; continue; }
+
+    const trust = autonomyFor(fix);
+    if (trust === 'propose') { proposed++; continue; }
+    if (trust === 'flag') flagged++;
+
+    try {
+      await applyPatch(issue, fix, { skipVerify: true });
+      recordAudit('applied', issue, fix);
+      applied++;
+    } catch (err) {
+      console.warn('Chat apply — failed for', issue.id, err);
+      failed++;
+    }
+  }
+
+  const parts = [`Applied ${applied}`];
+  if (flagged)  parts.push(`${flagged} worth reviewing`);
+  if (proposed) parts.push(`${proposed} left for you to approve`);
+  if (failed)   parts.push(`${failed} failed`);
+  showToast(`✓ ${parts.join(' · ')}`);
+
+  if (applied > 0) { updateSuggestButtonStates(); setTimeout(() => verifyPatchedScore(), 800); }
+}
+
 async function applyAllPatches() {
   if (!currentAnalysis?.issues?.length) {
     showToast('No issues to fix');
@@ -2208,6 +2841,8 @@ async function applyAllPatches() {
   let applied = 0;
   let failed = 0;
   let generated = 0;
+  let flagged = 0;    // applied, but confidence warrants a look
+  let proposed = 0;   // deliberately not applied — shown for review only
   const issues = currentAnalysis.issues;
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const pageUrl = tab?.url || '';
@@ -2226,7 +2861,8 @@ async function applyAllPatches() {
           action: 'fix',
           issue,
           pageUrl,
-          tabId: currentTabId
+          tabId: currentTabId,
+          designInfo: currentAnalysis?.designInfo || null
         });
         if (response?.ok && response.fix) {
           fix = response.fix;
@@ -2237,26 +2873,36 @@ async function applyAllPatches() {
     }
     
     if (!fix) { failed++; continue; }
-    
+
+    // Confidence gate: a low-confidence fix is shown but never applied on the
+    // user's behalf. One wrong bulk edit costs more trust than ten skipped ones.
+    const trust = autonomyFor(fix);
+    if (trust === 'propose') { proposed++; continue; }
+    if (trust === 'flag') flagged++;
+
     try {
       await applyPatch(issue, fix, { skipVerify: true });
+      recordAudit('applied', issue, fix);
       applied++;
     } catch (err) {
       console.warn('Apply all — failed for', issue.id, err);
       failed++;
     }
   }
-  
+
   btn.innerHTML = `${SVG.checkCircle} ${applied} Applied!`;
   setTimeout(() => {
     btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg> Apply All Patches`;
     btn.disabled = suggestionCache.size === 0;
   }, 2500);
   
-  const msg = failed > 0 
-    ? `✓ Applied ${applied} patches (${failed} failed)${generated > 0 ? ` — ${generated} generated on-the-fly` : ''}`
-    : `✓ Applied ${applied} patches to page${generated > 0 ? ` (${generated} generated on-the-fly)` : ''}`;
-  showToast(msg);
+  // Report what was held back as prominently as what was applied — a silent skip
+  // looks like a failure, and an unexplained edit looks like a liberty.
+  const parts = [`Applied ${applied} patches`];
+  if (flagged  > 0) parts.push(`${flagged} worth reviewing`);
+  if (proposed > 0) parts.push(`${proposed} left for you to approve`);
+  if (failed   > 0) parts.push(`${failed} failed`);
+  showToast(`✓ ${parts.join(' · ')}`);
 
   // Auto-verify score after batch apply — wait for DOM mutations to settle
   if (applied > 0) {
@@ -2278,6 +2924,7 @@ function updateLivePreviewUI() {
   // Apply All is enabled when there are cached suggestions not yet applied
   const unappliedCount = [...suggestionCache.keys()].filter(id => !patchedIssueIds.has(id)).length;
   els.btnApplyAllPatches.disabled = unappliedCount === 0;
+  if (els.livePreviewAvailableCount) els.livePreviewAvailableCount.textContent = unappliedCount;
 }
 
 function renderPatchList() {
@@ -2417,6 +3064,8 @@ async function handleScan() {
   clearTimeout(_breakdownAutoTimer);
   els.badges.classList.add('hidden');
   els.tabBar.classList.add('hidden');
+  document.getElementById('impairment-bar')?.classList.add('hidden');
+  document.getElementById('chat-bar')?.classList.add('hidden');
   els.quickActions.classList.add('hidden');
   els.filterBar.classList.add('hidden');
   if (els.btnVerifyScore) els.btnVerifyScore.classList.add('hidden');
@@ -2448,6 +3097,9 @@ async function handleScan() {
     currentAnalysis = response.analysis;
     const duration = ((Date.now() - scanStartTime) / 1000).toFixed(1);
     currentAnalysis._scanDuration = duration;
+    // Lock the original axe score so verifyPatchedScore always compares against the
+    // very first scan baseline — not a previous verify result.
+    currentAnalysis._originalAxeScore = currentAnalysis.auditScore;
 
     // Actively highlight issues on the page (don't rely on service worker step 7)
     highlightsActive = false; // will be set to true by toggleHighlights
@@ -2514,8 +3166,9 @@ function renderResults(analysis) {
   else if (score >= 70) els.scoreArc.style.stroke = 'var(--orange)';
   else els.scoreArc.style.stroke = 'var(--red)';
 
-  // Grade badge
-  const grade = getGrade(score);
+  // Grade badge — counts come from this analysis, which may not be committed to
+  // currentAnalysis yet at this point in the render.
+  const grade = getGrade(score, analysis.counts);
   els.scoreGrade.textContent = grade.label;
   els.scoreGrade.className = `score-grade ${grade.class}`;
   els.scoreGrade.classList.remove('hidden');
@@ -2525,6 +3178,9 @@ function renderResults(analysis) {
   els.scoreSource.className = 'score-source axe';
   els.scoreSource.title = 'Score from axe-core engine — Lighthouse score loading…';
   els.scoreSource.classList.remove('hidden');
+
+  // Show loading dashboard rings until Lighthouse data arrives
+  renderDashboardLhRings();
 
   // Info button + initial breakdown — reset to full chip (unseen) on every new scan
   els.scoreInfoBtn.classList.remove('hidden', 'seen', 'active');
@@ -2561,6 +3217,8 @@ function renderResults(analysis) {
 
   // Show tabs, then switch to issues (which also shows quick actions + filter bar)
   els.tabBar.classList.remove('hidden');
+  document.getElementById('impairment-bar')?.classList.remove('hidden');
+  document.getElementById('chat-bar')?.classList.remove('hidden');
   switchTab('issues');
 
   // Update highlight button to reflect auto-highlight state from scan
@@ -2582,7 +3240,7 @@ function renderResults(analysis) {
         <div class="no-issues-text">Perfect Score!</div>
         <div class="no-issues-sub">No accessibility issues found</div>
       </li>`;
-    launchConfetti();
+    // (celebration animation removed — this is a compliance tool)
   } else {
     issues.forEach((issue, idx) => {
       els.issuesList.appendChild(createIssueCard(issue, idx));
@@ -2592,25 +3250,157 @@ function renderResults(analysis) {
   els.issuesContainer.classList.remove('hidden');
   highlightsActive = true;
 
-  // Confetti for score >= 90
-  if (score >= 90 && issues.length > 0) {
-    launchConfetti();
-  }
+  // Findings on elements the automated audit passed — runs after the main
+  // render so the issue list is never held up waiting for it.
+  runJudgmentScan(analysis.counts?.passed ?? null);
 }
 
-function getGrade(score) {
-  if (score >= 70) return {
+/* ═══════ Beyond automated checks ═══════ */
+
+/**
+ * Ask the service worker for issues that axe-core and Lighthouse pass.
+ *
+ * Deliberately non-blocking and non-fatal: this is additive information, so a
+ * failure here must never disturb the main results the user already has.
+ */
+async function runJudgmentScan(automatedPassCount) {
+  const container = $('#judgment-container');
+  const list      = $('#judgment-list');
+  const countEl   = $('#judgment-count');
+  const summaryEl = $('#judgment-summary');
+  if (!container || !list) return;
+
+  container.classList.add('hidden');
+  list.innerHTML = '';
+  lastJudgmentFindings = [];
+
+  let response;
+  try {
+    response = await sendMessage({
+      action: 'judgment-scan',
+      tabId: currentTabId,
+      automatedPassCount
+    });
+  } catch {
+    return;
+  }
+  if (!response?.ok || !Array.isArray(response.findings) || !response.findings.length) return;
+
+  lastJudgmentFindings = response.findings;
+  countEl.textContent = `(${response.findings.length})`;
+  summaryEl.textContent = response.summary || '';
+
+  for (const finding of response.findings) {
+    list.appendChild(createJudgmentCard(finding));
+  }
+  container.classList.remove('hidden');
+}
+
+function createJudgmentCard(finding) {
+  const li = document.createElement('li');
+  li.className = `issue-card judgment-card sev-${finding.severity}`;
+
+  const selectors = finding.selectors || [];
+  const count = finding.occurrences || 1;
+
+  li.innerHTML = `
+    <div class="issue-head">
+      <span class="issue-sev sev-${finding.severity}">${escHtml(finding.severity)}</span>
+      <span class="judgment-tag" title="These elements pass axe-core and Lighthouse">Passes automated checks</span>
+      ${count > 1 ? `<span class="judgment-count" title="${count} elements affected">×${count}</span>` : ''}
+    </div>
+    <h3 class="issue-title">${escHtml(finding.title)}</h3>
+    ${finding.evidence ? `<div class="judgment-evidence">${escHtml(finding.evidence)}</div>` : ''}
+    <p class="issue-desc">${escHtml(finding.description || '')}</p>
+    ${finding.suggestedFix ? `<p class="judgment-fix"><strong>Fix:</strong> ${escHtml(finding.suggestedFix)}</p>` : ''}
+    <div class="issue-meta">
+      <span>${escHtml((finding.wcag || []).map(w => `WCAG ${w}`).join(', '))}</span>
+      ${selectors.length ? `<button class="judgment-locate" type="button">Show me${count > 1 ? ` <span class="judgment-locate-idx">1/${count}</span>` : ''}</button>` : ''}
+    </div>
+  `;
+
+  // With several affected elements the button walks through them one per click,
+  // so a grouped finding stays as inspectable as an individual one.
+  const locate = li.querySelector('.judgment-locate');
+  let index = 0;
+  locate?.addEventListener('click', () => {
+    const selector = selectors[index % selectors.length];
+    sendMessage({ action: 'scroll-to', tabId: currentTabId, selector });
+    index++;
+    const idxEl = locate.querySelector('.judgment-locate-idx');
+    if (idxEl) idxEl.textContent = `${(index % selectors.length) + 1}/${selectors.length}`;
+  });
+
+  // 3.3 — describe the actual image instead of leaving the reader to guess
+  // from a bad filename. Only offered where the finding carries a real src.
+  if (finding.ruleId === 'alt-text-quality' && finding.imageSrc) {
+    const visBtn = document.createElement('button');
+    visBtn.className = 'judgment-vision-btn';
+    visBtn.type = 'button';
+    visBtn.textContent = 'Describe with AI';
+    visBtn.addEventListener('click', async () => {
+      visBtn.disabled = true;
+      visBtn.textContent = 'Looking at the image…';
+      try {
+        const res = await sendMessage({ action: 'vision-alt', tabId: currentTabId, imageSrc: finding.imageSrc });
+        if (res?.ok && res.altText) {
+          visBtn.replaceWith(Object.assign(document.createElement('div'), {
+            className: 'judgment-vision-result',
+            textContent: `Suggested alt text: "${res.altText}"`
+          }));
+        } else {
+          visBtn.textContent = res?.error || 'Could not describe this image';
+          visBtn.disabled = false;
+        }
+      } catch (e) {
+        visBtn.textContent = e.message || 'Failed';
+        visBtn.disabled = false;
+      }
+    });
+    li.querySelector('.issue-meta')?.appendChild(visBtn);
+  }
+
+  return li;
+}
+
+/**
+ * Grade must agree with the compliance status shown beside it.
+ *
+ * Previously any score ≥ 70 returned "Grade A — meets WCAG 2.1 AA", which could
+ * sit directly next to an "At Risk" status on the same card. Grade A now requires
+ * what compliance actually calls compliant, and any critical violation caps the
+ * grade regardless of score.
+ *
+ * The wording is also narrowed: automated checks cover roughly a third of WCAG,
+ * so passing them is not "meets WCAG 2.1 AA" — it is passing the automated subset.
+ */
+function getGrade(score, counts = null) {
+  const critical = counts?.critical || 0;
+
+  if (score >= 90 && critical === 0) return {
     label: 'Grade A',
     class: 'a',
-    summary: 'Excellent — meets WCAG 2.1 AA standards',
+    summary: 'Passes all automated WCAG 2.1 AA checks — manual review still required',
     nextLevel: null,
-    missing: ['Resolve any remaining minor/moderate issues to reach a perfect score']
+    missing: ['Run the "Beyond automated checks" pass and a manual keyboard/screen-reader review']
   };
-  if (score >= 40) return {
+  if (score >= 70 && critical === 0) return {
     label: 'Grade B',
     class: 'b',
-    summary: 'Mediocre — partial compliance, room for improvement',
+    summary: 'Close — no critical violations, but issues remain',
     nextLevel: 'A',
+    missing: [
+      'Resolve the remaining moderate and minor violations',
+      'Confirm colour contrast reaches 4.5:1 for normal text'
+    ]
+  };
+  if (score >= 40) return {
+    label: 'Grade C',
+    class: 'c',
+    summary: critical > 0
+      ? `Partial compliance — ${critical} critical violation${critical > 1 ? 's' : ''} block assistive technology`
+      : 'Partial compliance — significant issues remain',
+    nextLevel: 'B',
     missing: [
       'Eliminate all Critical & Serious violations (each costs 5–10 pts)',
       'Fix color contrast issues to reach ≥4.5:1 ratio',
@@ -2619,10 +3409,10 @@ function getGrade(score) {
     ]
   };
   return {
-    label: 'Grade C',
+    label: 'Grade D',
     class: 'c',
-    summary: 'Poor — fails basic accessibility requirements',
-    nextLevel: 'B',
+    summary: 'Fails basic accessibility requirements',
+    nextLevel: 'C',
     missing: [
       'Multiple critical violations block assistive technology users',
       'Page likely fails ADA / EN 301 549 legal compliance',
@@ -2804,7 +3594,8 @@ async function handleFix(issue, btn) {
       action: 'fix',
       issue,
       pageUrl: tab?.url || '',
-      tabId: currentTabId
+      tabId: currentTabId,
+      designInfo: currentAnalysis?.designInfo || null
     });
 
     if (!response?.ok || !response.fix) {
@@ -2889,7 +3680,11 @@ async function prefetchSuggestions() {
           // 1. Try the deterministic path first (instant, has _patchHint metadata)
           let bestFix = null;
           try {
-            const detResp = await sendMessage({ action: 'fix', issue, pageUrl, tabId: currentTabId });
+            // deterministicOnly: the batch call above already produced a fix for every
+            // issue. This pass only exists to pick up the rule engine's _patchHint
+            // metadata, so it must never reach a model — otherwise one batched call
+            // silently becomes one call per issue.
+            const detResp = await sendMessage({ action: 'fix', issue, pageUrl, tabId: currentTabId, designInfo: currentAnalysis?.designInfo || null, deterministicOnly: true });
             if (detResp?.ok && detResp.fix && detResp.fix.confidence >= 0.7) {
               bestFix = detResp.fix;
             }
@@ -2943,7 +3738,8 @@ async function prefetchSuggestions() {
             action: 'fix',
             issue,
             pageUrl,
-            tabId: currentTabId
+            tabId: currentTabId,
+            designInfo: currentAnalysis?.designInfo || null
           });
           if (response?.ok && response.fix) {
             for (const iss of issues) {
@@ -3015,6 +3811,11 @@ function updateSuggestButtonStates() {
 
 function showFixModal(fix, issue) {
   els.fixTitle.textContent = fix.fixTitle || `Suggestion: ${issue.id}`;
+
+  // Emit the fix in the dialect this codebase actually uses. Handing a React
+  // developer `class="btn"` makes them translate it before they can use it.
+  const framework = globalThis.Framework.detectFramework(currentAnalysis?.designInfo?.tech);
+  const fw = globalThis.Framework.formatForFramework(fix.after || '', framework);
   
   const sourceIcon = fix.private ? SVG.lock : SVG.cloud;
   const sourceClass = fix.private ? 'private' : 'cloud';
@@ -3033,8 +3834,9 @@ function showFixModal(fix, issue) {
     <div class="fix-label">Current Code</div>
     <div class="fix-code before">${escapeHtml(fix.before || '(no code)')}</div>
     
-    <div class="fix-label">Suggested Fix</div>
-    <div class="fix-code after">${escapeHtml(fix.after || '(no suggestion)')}</div>
+    <div class="fix-label">Suggested Fix${fw.changed ? ` <span class="fix-fw-tag">${escapeHtml(fw.label)}</span>` : ''}</div>
+    <div class="fix-code after">${escapeHtml(fw.code || '(no suggestion)')}</div>
+    ${fw.note ? `<p class="fix-fw-note">${escapeHtml(fw.note)}</p>` : ''}
     
     <div class="fix-label">Explanation</div>
     <p class="fix-explanation">${escapeHtml(fix.explanation || '')}</p>
@@ -3047,14 +3849,20 @@ function showFixModal(fix, issue) {
     
     <div class="fix-actions">
       <button class="fix-copy-btn" id="fix-copy">${SVG.copy} Copy Code</button>
+      <button class="fix-copy-btn" id="fix-copy-diff">${SVG.copy} Copy Diff</button>
       ${sandboxBtn}
+      <button class="fix-apply-btn fix-auto-btn" id="fix-auto">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+        Fix &amp; Verify
+      </button>
     </div>
+    <div id="fix-auto-status" class="fix-auto-status hidden" role="status" aria-live="polite"></div>
   `;
 
   const copyBtn = $('#fix-copy');
   copyBtn.addEventListener('click', async () => {
     try {
-      await navigator.clipboard.writeText(fix.after || '');
+      await navigator.clipboard.writeText(fw.code || fix.after || '');
       copyBtn.innerHTML = SVG.check + ' Copied!';
       showToast('Code copied to clipboard');
       setTimeout(() => { copyBtn.innerHTML = SVG.copy + ' Copy Code'; }, 2000);
@@ -3062,7 +3870,60 @@ function showFixModal(fix, issue) {
       copyBtn.textContent = 'Copy failed';
     }
   });
+
+  // Copy the change as a patch — survives the page refresh that discards the
+  // live DOM edit, so the fix can actually reach the codebase.
+  const diffBtn = $('#fix-copy-diff');
+  diffBtn?.addEventListener('click', async () => {
+    try {
+      const pageUrl = currentAnalysis?.metadata?.url || '';
+      const diff = globalThis.FixExport.buildFixDiff(
+        { ...fix, after: fw.code || fix.after }, issue, pageUrl);
+      await navigator.clipboard.writeText(diff);
+      diffBtn.innerHTML = SVG.check + ' Copied!';
+      showToast('Diff copied — paste into your editor or ticket');
+      setTimeout(() => { diffBtn.innerHTML = SVG.copy + ' Copy Diff'; }, 2000);
+    } catch {
+      diffBtn.textContent = 'Copy failed';
+    }
+  });
   
+  // Fix & Verify — the full loop: apply, re-scan, retry on failure, escalate.
+  const autoBtn = $('#fix-auto');
+  const status  = $('#fix-auto-status');
+  autoBtn?.addEventListener('click', async () => {
+    autoBtn.disabled = true;
+    status.classList.remove('hidden', 'is-ok', 'is-fail');
+    status.classList.add('is-running');
+
+    const label = {
+      generating: (a, m) => `Generating a fix… (attempt ${a} of ${m})`,
+      applying:   ()     => 'Applying to the page…',
+      verifying:  ()     => 'Re-scanning to check it worked…',
+      retrying:   (a, m) => `That didn't clear it — undoing and trying a different approach (${a} of ${m})…`,
+      verified:   ()     => 'Verified.'
+    };
+
+    const result = await remediateIssue(issue, {
+      onProgress: ({ phase, attempt, maxAttempts }) => {
+        status.textContent = label[phase]?.(attempt, maxAttempts) || '';
+      }
+    });
+
+    status.classList.remove('is-running');
+    if (result.ok) {
+      status.classList.add('is-ok');
+      status.textContent = result.attempts > 1
+        ? `Fixed and verified — the violation is gone. Took ${result.attempts} attempts.`
+        : 'Fixed and verified — the violation is gone.';
+      showToast('Fix verified against a fresh scan');
+    } else {
+      status.classList.add('is-fail');
+      status.textContent = result.reason;
+    }
+    autoBtn.disabled = false;
+  });
+
   // Apply Fix button
   const applyBtn = $('#fix-apply');
   applyBtn?.addEventListener('click', async () => {
@@ -3135,6 +3996,17 @@ async function loadHistory() {
         }
       }
 
+      // 4.4 — full arc for this URL across all history, not just the one-step
+      // arrow above. Only rendered once there is more than a single data point.
+      const arc = globalThis.Trend?.buildUrlTrend(history, entry.url);
+      const sparkHtml = (arc && arc.count > 1) ? `
+        <svg class="history-sparkline" viewBox="0 0 80 20" preserveAspectRatio="none" aria-hidden="true">
+          <polyline points="${globalThis.Trend.buildSparklinePoints(arc.entries.map(e => e.score))}" />
+        </svg>
+        <span class="history-delta history-delta-${arc.direction}">
+          ${globalThis.Trend.directionSymbol(arc.direction)} ${arc.delta > 0 ? '+' : ''}${arc.delta} over ${arc.count} scans
+        </span>` : '';
+
       li.innerHTML = `
         <div class="history-score ${scoreClass}">${entry.score}</div>
         <div class="history-info">
@@ -3144,6 +4016,7 @@ async function loadHistory() {
             <span>${ago}</span>
             ${entry.duration ? `<span>${entry.duration}s</span>` : ''}
           </div>
+          ${sparkHtml}
         </div>
         ${trend ? `<span class="history-trend">${trend}</span>` : ''}
       `;
@@ -3166,7 +4039,94 @@ function timeAgo(ts) {
 
 /* ═══════ Export ═══════ */
 
-function handleExport(format) {
+/* ═══════ 6.1 — Client profiles ═══════ */
+
+let activeClientProfile = null;
+
+async function initClientProfiles() {
+  const sel = document.getElementById('client-profile-select');
+  if (!sel) return;
+
+  const { clientProfiles = [], activeClientProfileId = '' } = await chrome.storage.local.get(['clientProfiles', 'activeClientProfileId']);
+  sel.innerHTML = '<option value="">None — unbranded exports</option>' +
+    clientProfiles.map(p => `<option value="${escapeAttr(p.id)}">${escapeHtml(p.name)}</option>`).join('');
+  sel.value = activeClientProfileId || '';
+  activeClientProfile = clientProfiles.find(p => p.id === activeClientProfileId) || null;
+
+  sel.addEventListener('change', async () => {
+    const { clientProfiles: list = [] } = await chrome.storage.local.get('clientProfiles');
+    activeClientProfile = list.find(p => p.id === sel.value) || null;
+    await chrome.storage.local.set({ activeClientProfileId: sel.value || '' });
+  });
+
+  document.getElementById('client-profile-add')?.addEventListener('click', async () => {
+    const nameInput = document.getElementById('client-profile-name');
+    const name = (nameInput?.value || '').trim();
+    if (!name) { showToast('Enter a client name first'); return; }
+
+    const profile = globalThis.Branding.makeProfile({ name });
+    const { clientProfiles: list = [] } = await chrome.storage.local.get('clientProfiles');
+    const updated = [...list, profile];
+    await chrome.storage.local.set({ clientProfiles: updated, activeClientProfileId: profile.id });
+
+    nameInput.value = '';
+    await initClientProfiles();
+    showToast(`"${name}" added and set active`);
+  });
+}
+
+/** Applied uniformly at the point every markdown export is downloaded. */
+function brand(markdown) {
+  return globalThis.Branding.applyBranding(markdown, activeClientProfile);
+}
+
+/* ═══════ 6.2 — Team sync ═══════ */
+
+async function exportTeamBundle() {
+  const auditRes = await sendMessage({ action: 'audit-get', pageUrl: null });
+  const histRes  = await sendMessage({ action: 'get-history' });
+  const bundle = globalThis.TeamSync.buildTeamBundle({
+    auditLog: auditRes?.ok ? auditRes.entries : [],
+    scanHistory: histRes?.ok ? histRes.history : []
+  });
+  downloadFile(JSON.stringify(bundle, null, 2), `sitescope-team-${new Date().toISOString().slice(0,10)}.json`, 'application/json');
+  showToast(`Exported ${bundle.auditLog.length} audit entries, ${bundle.scanHistory.length} scans`);
+}
+
+async function importTeamBundleFile(e) {
+  const file = e.target.files?.[0];
+  e.target.value = ''; // allow re-selecting the same file later
+  if (!file) return;
+
+  let bundle;
+  try {
+    bundle = JSON.parse(await file.text());
+  } catch {
+    showToast('That file is not a valid team export');
+    return;
+  }
+
+  // Dedupe happens HERE, against the real existing data, before anything is
+  // written — audit-merge just appends what it's given, so sending it entries
+  // that were already deduped client-side is what keeps this additive-only.
+  const [auditRes, histRes] = await Promise.all([
+    sendMessage({ action: 'audit-get', pageUrl: null }),
+    sendMessage({ action: 'get-history' })
+  ]);
+  const merged = globalThis.TeamSync.importTeamBundle(bundle, {
+    auditLog: auditRes?.ok ? auditRes.entries : [],
+    scanHistory: histRes?.ok ? histRes.history : []
+  });
+  const newAuditEntries = merged.auditLog.slice((auditRes?.ok ? auditRes.entries.length : 0));
+
+  if (newAuditEntries.length) await sendMessage({ action: 'audit-merge', entries: newAuditEntries });
+  await chrome.storage.local.set({ scanHistory: merged.scanHistory });
+
+  showToast(`Imported ${merged.added.auditLog} audit entries, ${merged.added.scanHistory} scan${merged.added.scanHistory === 1 ? '' : 's'}`);
+  loadHistory();
+}
+
+async function handleExport(format) {
   if (!currentAnalysis) {
     showToast('Run a scan first');
     return;
@@ -3176,6 +4136,163 @@ function handleExport(format) {
   if (!requirePlan('export', 'Export')) return;
 
   switch (format) {
+    case 'evidence': {
+      // A dated record of work done and proven. Verified status comes only from
+      // issues confirmed absent by a re-scan — never from "a patch was applied".
+      // Derive status from the persisted audit log where possible: the in-memory
+      // sets only cover the current popup session, and a compliance record that
+      // forgets everything when a window closes is not a record.
+      const pageUrl = currentAnalysis.metadata?.url || '';
+      let appliedIds = [...patchedIssueIds];
+      let verifiedIds = [...verifiedIssueIds];
+      let auditEntries = [];
+      try {
+        const audit = await sendMessage({ action: 'audit-get', pageUrl });
+        if (audit?.ok && audit.summary) {
+          auditEntries = audit.entries || [];
+          appliedIds  = [...new Set([...appliedIds,  ...audit.summary.appliedIds])];
+          verifiedIds = [...new Set([...verifiedIds, ...audit.summary.verifiedIds])];
+        }
+      } catch { /* fall back to this session's state */ }
+
+      const report = globalThis.Evidence.buildEvidenceReport({
+        pageUrl,
+        pageTitle: currentAnalysis.metadata?.title || '',
+        analysis: currentAnalysis,
+        fixes: Object.fromEntries(suggestionCache),
+        appliedIds,
+        verifiedIds,
+        judgment: lastJudgmentFindings
+      });
+      const risk = globalThis.Risk.assessRisk(currentAnalysis.counts || {});
+      downloadFile(
+        brand(
+          globalThis.Evidence.renderEvidenceMarkdown(report) +
+            '\n' + globalThis.Risk.renderRiskMarkdown(risk) +
+            '\n' + globalThis.AuditLog.renderAuditMarkdown(auditEntries)
+        ),
+        `accessibility-record-${new Date().toISOString().slice(0, 10)}.md`,
+        'text/markdown'
+      );
+      showToast(
+        report.summary.verified > 0
+          ? `Evidence record downloaded — ${report.summary.verified} fixes verified`
+          : 'Evidence record downloaded'
+      );
+      break;
+    }
+
+    case 'session': {
+      const entries = (currentAnalysis.issues || [])
+        .map(issue => ({ issue, fix: suggestionCache.get(issue.id) }))
+        .filter(e => e.fix);
+      if (!entries.length) { showToast('No fixes generated yet'); break; }
+      downloadFile(
+        brand(globalThis.FixExport.buildSessionExport(
+          entries, currentAnalysis.metadata?.url || '', { verified: verifiedIssueIds.size })),
+        `accessibility-fixes-${new Date().toISOString().slice(0, 10)}.patch.txt`,
+        'text/plain'
+      );
+      showToast(`${entries.length} fixes exported`);
+      break;
+    }
+
+    case 'vision': {
+      let vis;
+      try {
+        vis = await sendMessage({ action: 'vision-scan', tabId: currentTabId });
+      } catch (e) { showToast(e.message || 'Visual scan failed'); break; }
+      if (!vis?.ok) { showToast(vis?.error || 'Visual scan failed'); break; }
+      if (!vis.findings?.length) { showToast('No visual-only issues found'); break; }
+      lastJudgmentFindings = [...lastJudgmentFindings, ...vis.findings];
+      const list = document.getElementById('judgment-list');
+      const container = document.getElementById('judgment-container');
+      if (list && container) {
+        for (const f of vis.findings) list.appendChild(createJudgmentCard(f));
+        container.classList.remove('hidden');
+      }
+      showToast(`${vis.findings.length} visual-only issue${vis.findings.length > 1 ? 's' : ''} found`);
+      break;
+    }
+
+    case 'transcript': {
+      const sr = await sendMessage({ action: 'screenreader-scan', tabId: currentTabId });
+      if (!sr?.ok || !sr.transcript?.length) { showToast('Could not read the page'); break; }
+      downloadFile(
+        globalThis.ScreenReader.renderTranscriptMarkdown(sr.transcript, sr.url),
+        `screen-reader-preview-${new Date().toISOString().slice(0, 10)}.md`,
+        'text/markdown'
+      );
+      const unnamed = sr.transcript.filter(l => l.unnamed).length;
+      showToast(unnamed ? `${sr.transcript.length} announcements — ${unnamed} unnamed` : `${sr.transcript.length} announcements`);
+      break;
+    }
+
+    case 'crawl':
+      await runSiteCrawl();
+      break;
+
+    case 'badge': {
+      const svg = globalThis.Badge.buildBadgeSvg({ score: currentAnalysis.auditScore || 0 });
+      const embed = globalThis.Badge.buildBadgeEmbed({
+        score: currentAnalysis.auditScore || 0, pageUrl: currentAnalysis.metadata?.url || '', svg
+      });
+      // The markdown embed already carries a working, self-contained data-URI
+      // image — nothing for the user to manually substitute. The raw .svg is
+      // included too, for anyone who'd rather host the file than inline it.
+      downloadFile(
+        `${embed}\n\n<!-- Raw SVG, if you'd rather host the file than inline it: -->\n${svg}`,
+        `sitescope-badge-${new Date().toISOString().slice(0, 10)}.md`,
+        'text/markdown'
+      );
+      showToast('Badge downloaded — ready to paste, no editing needed');
+      break;
+    }
+
+    case 'github-pr': {
+      const entries = (currentAnalysis.issues || [])
+        .map(issue => ({ issue, fix: suggestionCache.get(issue.id), verified: verifiedIssueIds.has(issue.id) }))
+        .filter(e => e.fix);
+      if (!entries.length) { showToast('No fixes generated yet — apply or generate at least one fix first'); break; }
+
+      const granted = await chrome.permissions.request({ origins: ['https://api.github.com/*'] }).catch(() => false);
+      if (!granted) { showToast('GitHub access permission is needed to open a PR'); break; }
+
+      const pageUrl = currentAnalysis.metadata?.url || '';
+      const patchContent = globalThis.FixExport.buildSessionExport(entries, pageUrl, { verified: verifiedIssueIds.size });
+
+      showToast('Opening pull request…', 4000);
+      let res;
+      try {
+        res = await sendMessage({ action: 'github-open-pr', entries, pageUrl, patchContent });
+      } catch (e) {
+        showToast(e.message || 'Could not open the pull request');
+        break;
+      }
+      if (!res?.ok) { showToast(res?.error || 'Could not open the pull request'); break; }
+
+      showToast(`Pull request opened: #${res.number}`);
+      window.open(res.url, '_blank', 'noopener');
+      break;
+    }
+
+    case 'vpat': {
+      const draft = globalThis.Vpat.buildVpatDraft({
+        axeIssues: currentAnalysis.issues || [],
+        otherFindings: lastJudgmentFindings || [],
+        verifiedIds: [...verifiedIssueIds],
+        pageUrl: currentAnalysis.metadata?.url || ''
+      });
+      downloadFile(
+        brand(globalThis.Vpat.renderVpatMarkdown(draft)),
+        `vpat-draft-${new Date().toISOString().slice(0, 10)}.md`,
+        'text/markdown'
+      );
+      const openCount = draft.rows.filter(r => r.status === 'Does Not Support').length;
+      showToast(openCount ? `VPAT draft downloaded — ${openCount} criteria show open issues` : 'VPAT draft downloaded');
+      break;
+    }
+
     case 'json':
       downloadFile(
         JSON.stringify(currentAnalysis, null, 2),
@@ -3236,7 +4353,7 @@ function generatePDFReport(analysis) {
 
 function generateDetailedHTMLReport(analysis) {
   const score = analysis.auditScore || 0;
-  const grade = getGrade(score);
+  const grade = getGrade(score, currentAnalysis?.counts);
   const issues = analysis.issues || [];
   const counts = analysis.counts || {};
   const needsReview = analysis.needsReview || [];
@@ -3358,7 +4475,7 @@ function generateDetailedHTMLReport(analysis) {
     <div class="report-header">
       <h1>♿ Accessibility <span>Audit Report</span></h1>
       <div class="report-branding">
-        <strong>Accea Agent</strong>
+        <strong>SiteScope 360</strong>
         Privacy-First Scanner
       </div>
     </div>
@@ -3450,7 +4567,7 @@ function generateDetailedHTMLReport(analysis) {
         Powered by axe-core accessibility testing engine.
       </div>
       <div class="right">
-        <strong>Accea Agent</strong><br>
+        <strong>SiteScope 360</strong><br>
         ${scanDate}
       </div>
     </div>
@@ -3626,7 +4743,7 @@ function downloadFile(content, filename, type) {
 async function copyReportToClipboard(analysis) {
   const score = analysis.auditScore || 0;
   const issues = analysis.issues || [];
-  const grade = getGrade(score);
+  const grade = getGrade(score, currentAnalysis?.counts);
   
   let text = `♿ Accessibility Report\n`;
   text += `━━━━━━━━━━━━━━━━━━━━\n`;
@@ -3639,7 +4756,7 @@ async function copyReportToClipboard(analysis) {
     text += '\n';
   });
 
-  text += `\n— Generated by Accea Agent`;
+  text += `\n— Generated by SiteScope 360`;
 
   try {
     await navigator.clipboard.writeText(text);
@@ -3851,9 +4968,14 @@ async function fetchLighthouseScores() {
   lighthouseLoading = true;
   lighthouseData = null;
 
+  // Show the progress bar immediately
+  els.lhLoadingHint?.classList.remove('hidden');
+  startLhProgressBar();
+
   // Show skeleton loaders immediately
   renderChecklistLighthouse();
   renderLighthouseTab();
+  renderDashboardLhRings();
 
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -3863,8 +4985,10 @@ async function fetchLighthouseScores() {
         pageUrl.startsWith('about:') || pageUrl.startsWith('file:')) {
       lighthouseLoading = false;
       lighthouseData = { error: 'Cannot analyze internal pages' };
+      completeLhProgressBar(false);
       renderChecklistLighthouse();
       renderLighthouseTab();
+      renderDashboardLhRings();
       return;
     }
 
@@ -3876,9 +5000,11 @@ async function fetchLighthouseScores() {
       // Cache hit — instant result
       lighthouseLoading = false;
       lighthouseData = result.data;
-      els.lhLoadingHint?.classList.add('hidden');
+      completeLhProgressBar(true);
       renderChecklistLighthouse();
       renderLighthouseTab();
+      renderDashboardLhRings();
+      renderUXPerfTab();
       upgradeScoreCardWithLighthouse();
       return; // done
     }
@@ -3886,44 +5012,59 @@ async function fetchLighthouseScores() {
     if (result?.status === 'error') {
       lighthouseLoading = false;
       lighthouseData = { error: result.error };
-      els.lhLoadingHint?.classList.add('hidden');
+      completeLhProgressBar(false);
       renderChecklistLighthouse();
       renderLighthouseTab();
+      renderDashboardLhRings();
+      renderUXPerfTab();
       return;
     }
 
     // status === 'fetching' — SW is working, we wait for the `lighthouse-ready` push.
-    // As a belt-and-suspenders fallback, poll the cache every 3s (handles the case
-    // where the push message is dropped because the popup was briefly closed).
+    // We poll using fetch-lighthouse (not get-lighthouse) so that if the MV3 service worker
+    // was killed and restarted mid-fetch, the poll automatically re-kicks the fetch.
     let pollCount = 0;
     const pollTimer = setInterval(async () => {
       pollCount++;
-      if (!lighthouseLoading) { clearInterval(pollTimer); return; } // push already arrived
-      const polled = await sendMessage({ action: 'get-lighthouse', url: pageUrl });
+      if (!lighthouseLoading) { clearInterval(pollTimer); return; }
+      // fetch-lighthouse: returns 'ready' (cache hit), 'fetching' (in-progress or re-kicked), or 'error'
+      const polled = await sendMessage({ action: 'fetch-lighthouse', url: pageUrl });
       if (polled?.status === 'ready' && polled.data) {
         clearInterval(pollTimer);
         lighthouseLoading = false;
         lighthouseData = polled.data;
-        els.lhLoadingHint?.classList.add('hidden');
+        completeLhProgressBar(true);
         renderChecklistLighthouse();
         renderLighthouseTab();
+        renderDashboardLhRings();
+        renderUXPerfTab();
         upgradeScoreCardWithLighthouse();
+      } else if (polled?.status === 'error') {
+        clearInterval(pollTimer);
+        lighthouseLoading = false;
+        lighthouseData = { error: polled.error };
+        completeLhProgressBar(false);
+        renderChecklistLighthouse();
+        renderLighthouseTab();
+        renderDashboardLhRings();
+        renderUXPerfTab();
       } else if (pollCount >= 40) { // 40 × 3s = 2 min max wait
         clearInterval(pollTimer);
         lighthouseLoading = false;
         lighthouseData = { error: 'Timed out waiting for Lighthouse' };
-        els.lhLoadingHint?.classList.add('hidden');
+        completeLhProgressBar(false);
         renderChecklistLighthouse();
         renderLighthouseTab();
+        renderDashboardLhRings();
+        renderUXPerfTab();
       }
     }, 3000);
 
-    // Show "still loading" hint after 30s
+    // Update status label after 30s to reassure user
     setTimeout(() => {
       if (lighthouseLoading) {
-        if (els.lhLoadingHint) {
-          els.lhLoadingHint.innerHTML = '<span class="lh-pulse"></span> Still fetching Lighthouse — large pages take longer…';
-        }
+        const status = document.getElementById('lh-fetch-status');
+        if (status) status.textContent = 'Large page — still working…';
         if (els.lhTabLoadingHint) {
           els.lhTabLoadingHint.textContent = 'Still fetching — large pages take longer…';
         }
@@ -3933,9 +5074,10 @@ async function fetchLighthouseScores() {
     console.warn('fetchLighthouseScores error:', e.message);
     lighthouseLoading = false;
     lighthouseData = { error: e.message };
-    els.lhLoadingHint?.classList.add('hidden');
+    completeLhProgressBar(false);
     renderChecklistLighthouse();
     renderLighthouseTab();
+    renderDashboardLhRings();
   }
 }
 
@@ -3947,8 +5089,9 @@ async function fetchLighthouseScores() {
 function renderLighthouseTab() {
   if (!els.lhTabScores) return;
 
-  // Loading state
-  if (lighthouseLoading) {
+  // Loading state — only show spinner when data has NOT arrived yet
+  const lhHasData = lighthouseData && !lighthouseData.error;
+  if (!lhHasData && !lighthouseData) {
     els.lhTabEmpty?.classList.add('hidden');
     els.lhTabLoading?.classList.remove('hidden');
     els.lhTabScores.innerHTML = '';
@@ -3962,22 +5105,23 @@ function renderLighthouseTab() {
 
   els.lhTabLoading?.classList.add('hidden');
 
-  // No data yet
-  if (!lighthouseData) {
-    els.lhTabEmpty?.classList.remove('hidden');
-    els.lhTabScores.innerHTML = '';
-    els.lhTabVitals?.classList.add('hidden');
-    els.lhTabDiagnostics?.classList.add('hidden');
-    els.lhTabPassed?.classList.add('hidden');
-    return;
-  }
-
   // Error state
   if (lighthouseData.error) {
     els.lhTabEmpty?.classList.add('hidden');
     els.lhTabStatus.textContent = 'Error';
     els.lhTabStatus.className = 'status-pill error';
-    els.lhTabScores.innerHTML = `<div class="lh-error">${escapeHtml(lighthouseData.error)}</div>`;
+    const isRateLimit = lighthouseData.error.toLowerCase().includes('rate limit');
+    els.lhTabScores.innerHTML = `
+      <div class="lh-error">
+        ${escapeHtml(lighthouseData.error)}
+        ${isRateLimit ? `<div class="lh-error-action">
+          <button class="action-chip" id="lh-goto-settings" style="margin-top:8px">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            Add API Key in Settings
+          </button>
+        </div>` : ''}
+      </div>`;
+    document.getElementById('lh-goto-settings')?.addEventListener('click', () => showSettings());
     els.lhTabVitals?.classList.add('hidden');
     els.lhTabDiagnostics?.classList.add('hidden');
     els.lhTabPassed?.classList.add('hidden');
@@ -4151,63 +5295,36 @@ function upgradeScoreCardWithLighthouse() {
   const lhScore = lighthouseData.accessibility;
   if (typeof lhScore !== 'number' || lhScore < 0) return;
 
-  // Only upgrade if the score card is visible (a scan has been run)
+  // Only act if the score card is visible (a scan has been run)
   if (els.scoreCard.classList.contains('hidden')) return;
 
-  const currentScore = parseInt(els.scoreNumber.textContent, 10) || 0;
+  // ── DO NOT touch the main ring number, arc, grade, or status ──
+  // The main ring always reflects the axe-core score (what was actually
+  // found on this page). Lighthouse is a different methodology and a
+  // different score — swapping the ring number would falsely imply the
+  // page improved. Instead, show the LH A11Y score as a reference badge.
 
-  // Animate from current axe-core score to Lighthouse score
-  animateCounter(els.scoreNumber, currentScore, lhScore, 600);
+  // Keep source badge as axe-core — LH score shows in the rings header instead
+  // (no change to scoreSource text here)
 
-  // Update ring
-  setTimeout(() => {
-    els.scoreArc.setAttribute('stroke-dasharray', `${lhScore}, 100`);
-  }, 50);
+  // Populate dashboard rings with real Lighthouse scores
+  renderDashboardLhRings();
 
-  // Update ring color
-  if (lhScore >= 90) els.scoreArc.style.stroke = 'var(--green)';
-  else if (lhScore >= 50) els.scoreArc.style.stroke = 'var(--orange)';
-  else els.scoreArc.style.stroke = 'var(--red)';
-
-  // Update grade
-  const grade = getGrade(lhScore);
-  els.scoreGrade.textContent = grade.label;
-  els.scoreGrade.className = `score-grade ${grade.class}`;
-
-  // Update compliance status based on Lighthouse score
-  const counts = currentAnalysis?.counts || {};
-  const hasCriticals = (counts.critical || 0) > 0;
-  let status;
-  if (lhScore >= 90 && !hasCriticals) status = 'Compliant';
-  else if (lhScore >= 70) status = 'At Risk';
-  else status = 'Not Compliant';
-  els.scoreStatus.textContent = status;
-  els.scoreStatus.className = 'score-status ' + status.toLowerCase().replace(/\s+/g, '-');
-
-  // Update source badge to Lighthouse
-  els.scoreSource.textContent = '✦ Lighthouse';
-  els.scoreSource.className = 'score-source lighthouse';
-  els.scoreSource.title = 'Google Lighthouse accessibility score via PageSpeed Insights API';
-
-  // Update attribution line — loading done
+  // Hide the loading hint
   els.lhLoadingHint.classList.add('hidden');
 
-  // Refresh breakdown panel with Lighthouse data
+  // Refresh breakdown panel with Lighthouse data alongside axe score
   const axeScore = currentAnalysis?.auditScore || 0;
   renderScoreBreakdown(axeScore, lighthouseData);
-
-  // Brief flash animation to draw attention to the upgrade
-  els.scoreCard.classList.add('score-upgraded');
-  setTimeout(() => els.scoreCard.classList.remove('score-upgraded'), 1200);
 }
 
 /**
  * Render the expandable score breakdown panel.
- * Shows Accea (axe-core) weighted score + Lighthouse benchmark scores.
+ * Shows SiteScope 360 (axe-core) weighted score + Lighthouse benchmark scores.
  */
 function renderScoreBreakdown(axeScore, lhData) {
   const rows = [];
-  const grade = getGrade(axeScore);
+  const grade = getGrade(axeScore, currentAnalysis?.counts);
 
   // 1. SiteScope 360 Score (axe-core weighted)
   rows.push(buildBreakdownRow(
@@ -4387,44 +5504,59 @@ function renderImprovementInsights(issues, score) {
       icon: '⚖️',
       stat: `${counts.critical}`,
       statLabel: `critical violation${counts.critical > 1 ? 's' : ''}`,
-      title: 'Legal action risk — your site may not meet compliance standards',
-      desc: `ADA Title III lawsuits hit over 4,600 businesses in 2023 — and every case started with unresolved critical accessibility violations. Regulatory bodies in the US (ADA), Canada (AODA) and EU (EN 301 549) don\'t distinguish by company size. A single DOJ complaint can cost $55,000–$150,000 before proceedings even begin.`,
+      title: `${counts.critical} critical violation${counts.critical > 1 ? 's' : ''} carry legal exposure`,
+      // Corrected: the $55k–$150k figures are DOJ civil penalty *maximums* for a
+      // first and subsequent violation — not costs incurred before proceedings.
+      // The previous copy also claimed every 2023 lawsuit began with a critical
+      // violation, which is not something anyone can know.
+      desc: `Around 4,600 web accessibility lawsuits were filed in the US in 2023 (UsableNet). The ADA, Canada's AODA and the EU's EN 301 549 apply regardless of company size, and DOJ civil penalties for ADA violations run up to $75,000 for a first violation and $150,000 for subsequent ones. Critical violations are the ones that block assistive technology outright, so they carry the most exposure.`,
       cta: 'Address these first',
       ctaClass: 'icard-cta-critical',
       tags: [{ label: 'ADA Risk', cls: 'itag-legal' }, { label: 'EN 301 549', cls: 'itag-legal' }, { label: 'Fix First', cls: 'itag-urgent' }]
     });
   }
 
-  // ─── Card 2: Invisible audience / lost revenue ────────────────────────────
+  // ─── Card 2: Audience reach ───────────────────────────────────────────────
+  // The headline number here used to be `Math.round(totalIssues / 3) + 4` shown
+  // as "~N% of visitors can't use your site" — a figure derived from the issue
+  // count and presented as a measurement. Anyone who asked where it came from
+  // would have discredited every other number on the screen. It now reports what
+  // was actually measured, and cites the external statistic as what it is.
   if (totalIssues > 0) {
-    const pct = Math.min(26, Math.round((totalIssues / 3) + 4));
-    const critAmt = counts.critical > 0 ? ` and ${counts.critical} critical barrier${counts.critical > 1 ? 's' : ''} that block screen readers entirely` : '';
+    const critAmt = counts.critical > 0
+      ? ` including ${counts.critical} critical barrier${counts.critical > 1 ? 's' : ''} that block screen readers entirely`
+      : '';
     cards.push({
       urgency: counts.critical > 0 ? 'high' : 'medium',
-      icon: '👥',
-      stat: `~${pct}%`,
-      statLabel: 'of visitors can\'t use your site',
-      title: '1 in 4 adults has a disability — you\'re turning them away',
-      desc: `With ${totalIssues} accessibility issue${totalIssues > 1 ? 's' : ''}${critAmt}, a significant slice of your audience hits a wall and leaves. That\'s not just a moral issue — it\'s a revenue leak. People with disabilities control over $490B in disposable income in the US alone. Your competitors who fix this first take that market.`,
-      cta: 'Capture this audience',
+      icon: '',
+      stat: `${totalIssues}`,
+      statLabel: `barrier${totalIssues > 1 ? 's' : ''} found on this page`,
+      title: 'Some visitors cannot complete tasks on this page',
+      desc: `This page has ${totalIssues} accessibility issue${totalIssues > 1 ? 's' : ''}${critAmt}. Around 1 in 4 US adults has a disability (CDC), and working-age people with disabilities hold an estimated $490B in disposable income (American Institutes for Research). How much of that audience this page affects depends on your traffic — the count above is what was measured here.`,
+      cta: 'Review these issues',
       ctaClass: 'icard-cta-high',
-      tags: [{ label: `~${pct}% blocked`, cls: 'itag-revenue' }, { label: '$490B market', cls: 'itag-revenue' }, { label: 'Retention', cls: 'itag-perf' }]
+      tags: [{ label: `${totalIssues} measured`, cls: 'itag-revenue' }, { label: 'Reach', cls: 'itag-revenue' }, { label: 'Retention', cls: 'itag-perf' }]
     });
   }
 
-  // ─── Card 3: Google is penalising you silently ────────────────────────────
+  // ─── Card 3: Markup quality that search engines also read ─────────────────
+  // Rewritten: the previous copy claimed "Google is penalising your site" and
+  // that these issues "may be why you're on page 2". Accessibility is not a
+  // Google ranking factor and there is no penalty — the claim was false and the
+  // page-2 line was unfalsifiable. What IS true is that the same markup carries
+  // meaning to both screen readers and crawlers, which is enough on its own.
   const seoIssues = issues.filter(i => ISSUE_IMPACT_MAP[i.id]?.seo);
   if (seoIssues.length > 0) {
     cards.push({
-      urgency: 'high',
-      icon: '🔍',
+      urgency: 'medium',
+      icon: '',
       stat: `${seoIssues.length}`,
-      statLabel: `issue${seoIssues.length > 1 ? 's' : ''} hurting your ranking`,
-      title: 'Google is penalising your site and you don\'t know it',
-      desc: `Missing alt text, broken heading structure and unlabelled buttons all degrade your semantic markup — the same signals Google uses to rank pages. These ${seoIssues.length} issue${seoIssues.length > 1 ? 's' : ''} may be why you\'re on page 2 instead of page 1. Fixing them is a free SEO upgrade bundled with an accessibility fix.`,
-      cta: 'Boost your ranking',
+      statLabel: `issue${seoIssues.length > 1 ? 's' : ''} also affecting markup quality`,
+      title: 'These fixes improve how machines read the page',
+      desc: `Alt text, heading structure and element labels describe your content to screen readers — and search crawlers read the same markup to understand what a page is about. Fixing these ${seoIssues.length} issue${seoIssues.length > 1 ? 's' : ''} improves both at once. Accessibility is not a Google ranking factor, so treat this as better-structured content rather than a ranking change.`,
+      cta: 'Review these issues',
       ctaClass: 'icard-cta-high',
-      tags: [{ label: 'SEO Ranking', cls: 'itag-seo' }, { label: 'Core Web Vitals', cls: 'itag-seo' }, { label: 'Free Win', cls: 'itag-perf' }]
+      tags: [{ label: 'Semantic markup', cls: 'itag-seo' }, { label: 'Crawlability', cls: 'itag-seo' }, { label: 'Shared fix', cls: 'itag-perf' }]
     });
   }
 
@@ -4434,12 +5566,16 @@ function renderImprovementInsights(issues, score) {
     const n = contrastIssue.elementCount || 'Multiple';
     cards.push({
       urgency: 'medium',
-      icon: '🎨',
+      icon: '',
       stat: `${n}`,
       statLabel: 'text elements fail contrast',
-      title: 'Your text is hard to read — users are forming a bad impression',
-      desc: `Low contrast text isn\'t just an accessibility issue — it signals poor craftsmanship. Stanford research shows users judge website credibility within 50 milliseconds, and readability is a primary signal. On mobile in bright conditions, these ${n} elements become nearly invisible, causing abandonment before your CTA is even seen.`,
-      cta: 'Improve first impression',
+      title: `${n} text element${n === 1 ? '' : 's'} fall below the required contrast ratio`,
+      // The 50ms credibility figure was attributed to Stanford; it is from
+      // Lindgaard et al. at Carleton University, and it measures visual appeal
+      // judgements rather than contrast specifically. Removed rather than fixed —
+      // the measured failure count is the stronger argument on its own.
+      desc: `WCAG requires 4.5:1 contrast for body text and 3:1 for large text. These ${n} element${n === 1 ? '' : 's'} fall below that, which affects readers with low vision, and anyone reading on a phone in daylight.`,
+      cta: 'Review contrast',
       ctaClass: 'icard-cta-medium',
       tags: [{ label: 'Brand Trust', cls: 'itag-brand' }, { label: 'Mobile UX', cls: 'itag-perf' }, { label: 'Readability', cls: 'itag-brand' }]
     });
@@ -4452,12 +5588,12 @@ function renderImprovementInsights(issues, score) {
   if (blockedCount > 0) {
     cards.push({
       urgency: counts.critical > 0 ? 'high' : 'medium',
-      icon: '⌨️',
+      icon: '',
       stat: `${blockedCount}`,
       statLabel: 'barriers for keyboard users',
-      title: 'Power users and disabled users are completely locked out',
-      desc: `Keyboard-only users, switch device users, and screen reader users (JAWS, VoiceOver, NVDA) cannot navigate your site due to ${blockedCount} ARIA and focus issue${blockedCount > 1 ? 's' : ''}. These are often your most loyal, high-intent users. B2B enterprise buyers frequently use keyboard navigation. You\'re invisible to them.`,
-      cta: 'Unlock every user',
+      title: `${blockedCount} ARIA and focus issue${blockedCount > 1 ? 's' : ''} affect keyboard navigation`,
+      desc: `People using a keyboard, a switch device, or a screen reader (JAWS, VoiceOver, NVDA) navigate by focus order and ARIA roles. These ${blockedCount} issue${blockedCount > 1 ? 's' : ''} make parts of the page harder or impossible to reach that way. Whether any given element is fully blocking depends on the assistive technology, so confirm with a keyboard-only pass.`,
+      cta: 'Review these issues',
       ctaClass: 'icard-cta-medium',
       tags: [{ label: 'Screen Readers', cls: 'itag-legal' }, { label: 'JAWS / VoiceOver', cls: 'itag-brand' }, { label: `${blockedCount} barriers`, cls: 'itag-urgent' }]
     });
@@ -4469,11 +5605,11 @@ function renderImprovementInsights(issues, score) {
   if (quickWins.length > 0) {
     cards.push({
       urgency: 'low',
-      icon: '⚡',
+      icon: '',
       stat: `~${totalMins}min`,
-      statLabel: 'of dev time to fix',
-      title: `${quickWins.length} high-impact fixes your developer can ship today`,
-      desc: `These are one-line code changes — adding alt="" to an image, a <label> to a form, an aria-label to a button. Each fix removes a real barrier for real users. One dev session, meaningful score boost, and a defensible compliance improvement. The ROI per hour here beats almost any other dev task.`,
+      statLabel: 'estimated dev time',
+      title: `${quickWins.length} fix${quickWins.length > 1 ? 'es' : ''} are single-line changes`,
+      desc: `These are one-line code changes — alt text on an image, a <label> on a form field, an aria-label on a button. Each removes a real barrier. The time estimate assumes the markup is easy to locate in your codebase; templated or component-generated pages may take longer.`,
       cta: 'Start here',
       ctaClass: 'icard-cta-low',
       tags: [{ label: `${quickWins.length} fixes`, cls: 'itag-perf' }, { label: `~${totalMins}min`, cls: 'itag-perf' }, { label: 'Highest ROI', cls: 'itag-revenue' }]
@@ -4484,12 +5620,16 @@ function renderImprovementInsights(issues, score) {
   if (score >= 90 && totalIssues <= 3) {
     cards.push({
       urgency: 'low',
-      icon: '🏆',
+      icon: '',
       stat: `${100 - score}pts`,
-      statLabel: 'from a perfect score',
-      title: 'You\'re this close to a compliance badge worth putting everywhere',
-      desc: `Full WCAG 2.1 AA compliance is a trust signal you can put in your footer, pitch deck, investor materials, and client proposals. With only ${totalIssues} issue${totalIssues !== 1 ? 's' : ''} remaining, you\'re moments away from joining the ~3% of websites that can honestly claim it. Don\'t stop now.`,
-      cta: 'Cross the finish line',
+      statLabel: 'from a perfect automated score',
+      title: `${totalIssues} issue${totalIssues !== 1 ? 's' : ''} left on the automated checks`,
+      // Removed advice to advertise "WCAG 2.1 AA compliance" in investor and
+      // client materials off the back of an automated scan. Automated checks
+      // cover roughly a third of WCAG, so that claim would not be supportable —
+      // and the user, not this tool, carries the consequences of making it.
+      desc: `Only ${totalIssues} issue${totalIssues !== 1 ? 's' : ''} remain on the automated checks. Worth knowing before you claim conformance anywhere: automated testing covers roughly a third of WCAG success criteria. A clean score here is a good sign, not a conformance statement — that needs manual keyboard and screen-reader review too.`,
+      cta: 'Finish the automated checks',
       ctaClass: 'icard-cta-low',
       tags: [{ label: 'WCAG 2.1 AA', cls: 'itag-seo' }, { label: 'Trust Signal', cls: 'itag-brand' }, { label: 'Top 3%', cls: 'itag-revenue' }]
     });
@@ -4556,7 +5696,6 @@ function renderChecklist() {
   if (!currentAnalysis || !currentAnalysis.issues) {
     els.checklistEmpty.classList.remove('hidden');
     els.checklistList.innerHTML = '';
-    els.checklistLighthouse.classList.add('hidden');
     return;
   }
 
@@ -4621,7 +5760,14 @@ function renderChecklist() {
           <div class="checklist-detail-row"><span class="checklist-detail-label">Scores</span><span class="checklist-detail-value">Performance: ${lighthouseData.performance} · Accessibility: ${lighthouseData.accessibility} · Best Practices: ${lighthouseData.bestPractices} · SEO: ${lighthouseData.seo}</span></div>
           <div class="checklist-detail-tip">💡 Lighthouse scores are fetched from Google PageSpeed Insights API. Scores above 90 are considered good.</div>`;
       }
-      return `<div class="checklist-detail-tip">💡 Lighthouse scores are fetched after scan from Google PageSpeed Insights. Make sure the page is publicly accessible.</div>`;
+      if (lighthouseLoading) {
+        return `<div class="checklist-detail-tip">⏳ Fetching Lighthouse scores from PageSpeed Insights — this takes 10–30s…</div>`;
+      }
+      if (lighthouseData?.error) {
+        const isRateLimit = lighthouseData.error.toLowerCase().includes('rate limit');
+        return `<div class="checklist-detail-tip">⚠️ ${escapeHtml(lighthouseData.error)}${isRateLimit ? ' — open ⚙️ Settings → Lighthouse to add your API key.' : ''}</div>`;
+      }
+      return `<div class="checklist-detail-tip">💡 Scores will appear here automatically after a scan completes.</div>`;
     }
     if (item.special === 'mobile') {
       return `
@@ -4745,54 +5891,143 @@ function renderChecklist() {
 /**
  * Render mini Lighthouse score circles at top of checklist tab
  */
-function renderChecklistLighthouse() {
-  if (lighthouseLoading) {
-    els.checklistLighthouse.classList.remove('hidden');
-    els.checklistLhScores.innerHTML = ['Perf', 'A11y', 'BP', 'SEO'].map((label, i) => `
-      <div class="cl-lh-card skeleton" style="animation-delay:${i * 0.08}s">
-        <div class="cl-lh-skeleton-circle"></div>
-        <div class="cl-lh-label">${label}</div>
-      </div>
-    `).join('');
+function renderDashboardLhRings() {
+  if (!els.lhRings) return;
+
+  const chevron = `<svg class="lh-rings-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>`;
+
+  const hasData  = lighthouseData && !lighthouseData.error;
+  const hasError = !lighthouseLoading && lighthouseData?.error;
+
+  // ── Error: hide entirely, mark tab failed ─────────────────────
+  if (hasError) {
+    els.lhRings.classList.add('hidden');
+    els.lhRings.classList.remove('lh-rings--open');
+    _markLhTabFailed(lighthouseData.error || 'Lighthouse unavailable');
     return;
   }
 
-  if (!lighthouseData || lighthouseData.error) {
-    els.checklistLighthouse.classList.add('hidden');
+  // Make visible
+  els.lhRings.classList.remove('hidden');
+
+  // ── Loading: show progress bar only when data has NOT arrived yet ──
+  if (!hasData) {
+    els.lhRings.classList.remove('lh-rings--open');
+    els.lhRings.innerHTML = `
+      <div class="lh-rings-header">
+        <span class="lh-rings-dot lh-rings-dot--pulse"></span>
+        <span class="lh-rings-title">GOOGLE LIGHTHOUSE</span>
+        <span class="lh-rings-fetching-inline">
+          <span id="lh-fetch-status" class="lh-fetch-status-text">Fetching…</span>
+          <span class="lh-mini-track"><span id="lh-mini-fill" class="lh-mini-fill"></span></span>
+          <span id="lh-mini-pct" class="lh-mini-pct">0%</span>
+        </span>
+      </div>`;
     return;
   }
 
-  els.checklistLighthouse.classList.remove('hidden');
+  // ── Success: lighthouseData is present and valid ───────────────
+  lighthouseLoading = false; // ensure flag is consistent
+  _markLhTabFailed(null);
+
   const scores = [
-    { label: 'Perf', score: lighthouseData.performance },
-    { label: 'A11y', score: lighthouseData.accessibility },
-    { label: 'BP', score: lighthouseData.bestPractices },
-    { label: 'SEO', score: lighthouseData.seo },
+    { label: 'Performance',    score: lighthouseData.performance   },
+    { label: 'Accessibility',  score: lighthouseData.accessibility  },
+    { label: 'Best Practices', score: lighthouseData.bestPractices  },
+    { label: 'SEO',            score: lighthouseData.seo            },
   ];
 
-  els.checklistLhScores.innerHTML = scores.map((s, i) => {
-    const colorClass = s.score >= 90 ? 'green' : s.score >= 50 ? 'orange' : 'red';
-    return `
-      <div class="cl-lh-card" style="animation-delay:${i * 0.08}s">
-        <div class="cl-lh-ring ${colorClass}">
-          <svg viewBox="0 0 36 36" class="cl-lh-svg">
-            <path class="cl-lh-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"/>
-            <path class="cl-lh-fg ${colorClass}" stroke-dasharray="0, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" data-score="${s.score}"/>
-          </svg>
-          <span class="cl-lh-num">${s.score}</span>
-        </div>
-        <div class="cl-lh-label">${s.label}</div>
+  els.lhRings.innerHTML = `
+    <div class="lh-rings-header lh-rings-toggle" role="button" tabindex="0" aria-expanded="false">
+      <span class="lh-rings-dot lh-rings-dot--green"></span>
+      <span class="lh-rings-title">GOOGLE LIGHTHOUSE</span>
+      ${chevron}
+    </div>
+    <div class="lh-rings-body">
+      <div class="lh-rings-grid">
+        ${scores.map((s, i) => {
+          const colorClass = s.score >= 90 ? 'green' : s.score >= 50 ? 'orange' : 'red';
+          const color = colorClass === 'green' ? 'var(--green)' : colorClass === 'orange' ? 'var(--orange)' : 'var(--red)';
+          return `
+            <div class="lh-ring-card just-arrived" style="animation-delay:${i * 0.08}s">
+              <div class="cl-lh-ring ${colorClass}">
+                <svg viewBox="0 0 36 36" class="cl-lh-svg">
+                  <path class="cl-lh-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"/>
+                  <path class="cl-lh-fg ${colorClass}" stroke-dasharray="0, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" data-score="${s.score}"/>
+                </svg>
+                <span class="cl-lh-num" style="color:${color}">${s.score}</span>
+              </div>
+              <div class="cl-lh-label">${s.label}</div>
+            </div>`;
+        }).join('')}
       </div>
-    `;
-  }).join('');
+      ${(() => {
+        const m = lighthouseData.metrics || {};
+        const vitals = [
+          { key: 'largest-contentful-paint', name: 'Page Load Speed', good: 2500, poor: 4000 },
+          { key: 'first-contentful-paint',   name: 'First Content',   good: 1800, poor: 3000 },
+          { key: 'total-blocking-time',       name: 'Responsiveness',  good: 200,  poor: 600  },
+          { key: 'cumulative-layout-shift',   name: 'Visual Stability',good: 0.1,  poor: 0.25 },
+          { key: 'speed-index',               name: 'Visual Speed',    good: 3400, poor: 5800 },
+          { key: 'interactive',               name: 'Interactive',     good: 3800, poor: 7300 },
+        ];
+        const statusLabel = (s) => s === 'good' ? 'Fast ✓' : s === 'avg' ? 'Needs work' : 'Slow ✗';
+        const items = vitals.map(v => {
+          const entry = m[v.key];
+          if (entry == null) return '';
+          const raw = typeof entry === 'object' ? entry.numericValue : entry;
+          if (raw == null) return '';
+          const display = (typeof entry === 'object' && entry.displayValue) ? entry.displayValue
+            : (raw >= 1000 ? (raw / 1000).toFixed(1) + 's' : Math.round(raw) + 'ms');
+          const status = raw <= v.good ? 'good' : raw <= v.poor ? 'avg' : 'poor';
+          return `<div class="lh-vital-item lh-vital--${status}">
+            <span class="lh-vital-name">${v.name}</span>
+            <span class="lh-vital-status">${statusLabel(status)}</span>
+            <span class="lh-vital-val">${display}</span>
+          </div>`;
+        }).filter(Boolean).join('');
+        return items ? `<div class="lh-vitals-strip">${items}</div>` : '';
+      })()}
+    </div>`;
 
-  // Animate rings
-  setTimeout(() => {
-    els.checklistLhScores.querySelectorAll('.cl-lh-fg').forEach(ring => {
-      ring.setAttribute('stroke-dasharray', `${ring.dataset.score}, 100`);
+  // Auto-open with a tick delay so the transition fires
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      els.lhRings.classList.add('lh-rings--open');
+      els.lhRings.querySelector('.lh-rings-toggle')?.setAttribute('aria-expanded', 'true');
+      // Animate arcs after body has expanded
+      setTimeout(() => {
+        els.lhRings.querySelectorAll('.cl-lh-fg').forEach(ring => {
+          ring.setAttribute('stroke-dasharray', `${ring.dataset.score}, 100`);
+        });
+      }, 80);
     });
-  }, 50);
+  });
+
+  // Click to toggle
+  els.lhRings.querySelector('.lh-rings-toggle')?.addEventListener('click', () => {
+    const isOpen = els.lhRings.classList.toggle('lh-rings--open');
+    els.lhRings.querySelector('.lh-rings-toggle')?.setAttribute('aria-expanded', String(isOpen));
+  });
 }
+
+function _markLhTabFailed(tip) {
+  const btn = document.querySelector('.tab-btn[data-tab="ux-perf"]');
+  if (!btn) return;
+  btn.querySelectorAll('.tab-lh-fail').forEach(el => el.remove());
+  if (tip) {
+    const dot = document.createElement('span');
+    dot.className = 'tab-lh-fail';
+    dot.title = tip;
+    btn.appendChild(dot);
+    btn.classList.add('tab-lh-failed');
+  } else {
+    btn.classList.remove('tab-lh-failed');
+  }
+}
+
+// LH rings removed from Checks tab — they live on the dashboard accordion instead.
+function renderChecklistLighthouse() { /* no-op */ }
 
 /* ═══════ End Checklist ═══════ */
 
@@ -4919,9 +6154,25 @@ async function loadSettings() {
   els.settingPrivacy.checked = response.privacyMode !== false;
   els.settingCloud.checked = response.cloudOptIn === true;
   els.settingServerUrl.value = response.localServerUrl || 'http://localhost:3000';
-  els.settingGeminiApiKey.value = response.geminiApiKey || '';
+  const savedProvider = response.llmProvider || (response.geminiApiKey ? 'gemini' : 'none');
+  if (els.settingLlmProvider) els.settingLlmProvider.value = savedProvider;
+  updateLlmProviderUI(savedProvider);
+  if (els.settingLlmModel && response.llmModel) els.settingLlmModel.value = response.llmModel;
+  els.settingGeminiApiKey.value = response.llmApiKey || response.geminiApiKey || '';
   els.settingAutoHighlight.checked = response.autoHighlight !== false;
   els.settingBadge.checked = response.showBadge !== false;
+  refreshCostMeter();
+  const ambientEl = document.getElementById('setting-ambient-scan');
+  if (ambientEl) ambientEl.checked = response.ambientScanEnabled === true;
+
+  const ghToken  = document.getElementById('setting-github-token');
+  const ghOwner  = document.getElementById('setting-github-owner');
+  const ghRepo   = document.getElementById('setting-github-repo');
+  const ghBranch = document.getElementById('setting-github-branch');
+  if (ghToken)  ghToken.value  = response.githubToken || '';
+  if (ghOwner)  ghOwner.value  = response.githubOwner || '';
+  if (ghRepo)   ghRepo.value   = response.githubRepo  || '';
+  if (ghBranch) ghBranch.value = response.githubBaseBranch || 'main';
   els.settingPsApiKey.value = response.pagespeedApiKey || '';
 
   if (els.settingPrivacy.checked) {
@@ -4929,19 +6180,116 @@ async function loadSettings() {
   }
 }
 
+/* ── LLM provider/model config ── */
+const LLM_PROVIDERS = {
+  none:      { label: 'None',      models: [],                                                         hint: 'Using Chrome built-in AI or local server only.',           keyLink: '#',                                           keyPlaceholder: '' },
+  gemini:    { label: 'Gemini',    models: ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-pro'], hint: 'Free tier: 15 req/min · 1,500 req/day',                  keyLink: 'https://aistudio.google.com/app/apikey',      keyPlaceholder: 'AIza…' },
+  openai:    { label: 'OpenAI',    models: ['gpt-4o-mini', 'gpt-4.1-mini', 'gpt-4o', 'gpt-4-turbo'],  hint: 'Pay-as-you-go. gpt-4o-mini is cheapest & fastest.',      keyLink: 'https://platform.openai.com/api-keys',        keyPlaceholder: 'sk-…' },
+  anthropic: { label: 'Anthropic', models: ['claude-3-5-haiku-20241022', 'claude-3-5-sonnet-20241022', 'claude-3-opus-20240229'], hint: 'claude-3-5-haiku is fastest & most affordable.', keyLink: 'https://console.anthropic.com/settings/keys',  keyPlaceholder: 'sk-ant-…' },
+  mistral:   { label: 'Mistral',   models: ['mistral-small-latest', 'mistral-medium-latest', 'mistral-large-latest'], hint: 'mistral-small is fast & low cost.',             keyLink: 'https://console.mistral.ai/api-keys/',        keyPlaceholder: 'your-mistral-key…' }
+};
+
+function updateLlmProviderUI(provider) {
+  const cfg = LLM_PROVIDERS[provider] || LLM_PROVIDERS.none;
+  const modelRow = document.getElementById('llm-model-row');
+  const keyRow   = document.getElementById('llm-key-row');
+  const hintEl   = document.getElementById('llm-provider-hint');
+  const keyLink  = document.getElementById('llm-key-link');
+  const keyInput = els.settingGeminiApiKey;
+
+  // Update hint & key link
+  if (hintEl) hintEl.textContent = cfg.hint;
+  if (keyLink) { keyLink.href = cfg.keyLink; keyLink.textContent = cfg.keyLink === '#' ? '' : '(get key)'; }
+  if (keyInput) keyInput.placeholder = cfg.keyPlaceholder || 'Paste your API key…';
+
+  if (provider === 'none') {
+    if (modelRow) modelRow.style.display = 'none';
+    if (keyRow)   keyRow.style.display   = 'none';
+    return;
+  }
+  if (modelRow) modelRow.style.display = '';
+  if (keyRow)   keyRow.style.display   = '';
+
+  // Rebuild model dropdown
+  const modelSel = els.settingLlmModel;
+  if (modelSel) {
+    modelSel.innerHTML = cfg.models.map((m, i) =>
+      `<option value="${m}"${i === 0 ? ' selected' : ''}>${m}${i === 0 ? ' ⭐' : ''}</option>`
+    ).join('');
+  }
+}
+
+async function validateLlmKey(provider, key, model) {
+  const statusEl = document.getElementById('llm-key-status');
+  if (!statusEl) return;
+  if (!key || provider === 'none') { statusEl.textContent = ''; return; }
+  statusEl.textContent = '⏳ Validating…';
+  statusEl.style.color = 'var(--text-muted)';
+  try {
+    let res;
+    if (provider === 'gemini') {
+      res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model || 'gemini-2.0-flash'}:generateContent?key=${encodeURIComponent(key)}`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: 'ping' }] }] }) }
+      );
+    } else if (provider === 'openai') {
+      res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+        body: JSON.stringify({ model: model || 'gpt-4o-mini', messages: [{ role: 'user', content: 'ping' }], max_tokens: 1 })
+      });
+    } else if (provider === 'anthropic') {
+      res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+        body: JSON.stringify({ model: model || 'claude-3-5-haiku-20241022', max_tokens: 1, messages: [{ role: 'user', content: 'ping' }] })
+      });
+    } else if (provider === 'mistral') {
+      res = await fetch('https://api.mistral.ai/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+        body: JSON.stringify({ model: model || 'mistral-small-latest', messages: [{ role: 'user', content: 'ping' }], max_tokens: 1 })
+      });
+    }
+    if (res && res.ok) {
+      statusEl.textContent = `✓ Key valid — ${LLM_PROVIDERS[provider]?.label} connected`;
+      statusEl.style.color = '#4ade80';
+    } else {
+      const err = await res?.json().catch(() => ({}));
+      const msg = err?.error?.message || err?.message || `HTTP ${res?.status}`;
+      statusEl.textContent = `✗ ${msg}`;
+      statusEl.style.color = '#f87171';
+    }
+  } catch (e) {
+    statusEl.textContent = '✗ Network error — check permissions';
+    statusEl.style.color = '#f87171';
+  }
+}
+
 async function saveCurrentSettings() {
+  const provider = (els.settingLlmProvider?.value || 'gemini');
+  const model    = (els.settingLlmModel?.value || '');
+  const apiKey   = (els.settingGeminiApiKey.value || '').trim();
   await sendMessage({
     action: 'save-settings',
     settings: {
-      privacyMode: els.settingPrivacy.checked,
-      cloudOptIn: els.settingCloud.checked,
+      privacyMode:    els.settingPrivacy.checked,
+      cloudOptIn:     els.settingCloud.checked,
       localServerUrl: els.settingServerUrl.value,
-      geminiApiKey: (els.settingGeminiApiKey.value || '').trim(),
-      autoHighlight: els.settingAutoHighlight.checked,
-      showBadge: els.settingBadge.checked,
-      pagespeedApiKey: (els.settingPsApiKey.value || '').trim()
+      llmProvider:    provider,
+      llmModel:       model,
+      geminiApiKey:   provider === 'gemini'    ? apiKey : '',
+      llmApiKey:      apiKey,
+      autoHighlight:  els.settingAutoHighlight.checked,
+      showBadge:      els.settingBadge.checked,
+      pagespeedApiKey: (els.settingPsApiKey.value || '').trim(),
+      githubToken:      (document.getElementById('setting-github-token')?.value || '').trim(),
+      githubOwner:       (document.getElementById('setting-github-owner')?.value || '').trim(),
+      githubRepo:        (document.getElementById('setting-github-repo')?.value || '').trim(),
+      githubBaseBranch:  (document.getElementById('setting-github-branch')?.value || '').trim() || 'main'
     }
   });
+  await validateLlmKey(provider, apiKey, model);
 }
 
 /* ═══════ LLM capabilities ═══════ */
@@ -5084,6 +6432,523 @@ function showError(text) {
   els.errorText.textContent = text;
   els.error.classList.remove('hidden');
   setTimeout(() => els.error.classList.add('hidden'), 5000);
+}
+
+/* ═══════ UX & Performance Tab ═══════ */
+
+function renderUXPerfTab() {
+  const content = els.uxpContent;
+  const empty   = els.uxpEmpty;
+  if (!content || !empty) return;
+
+  if (!currentAnalysis) {
+    empty.classList.remove('hidden');
+    content.classList.add('hidden');
+    return;
+  }
+
+  empty.classList.add('hidden');
+  content.classList.remove('hidden');
+
+  const d      = currentAnalysis?.designInfo || {};
+  const colors = d.colors || [];
+  const fonts  = d.fonts  || [];
+  const meta   = d.meta   || {};
+  const tokens = d.tokens || {};
+  const tech   = d.tech   || [];
+  const issues = currentAnalysis?.issues || [];
+  const lh     = lighthouseData;
+
+  const uxCards   = buildUXInsightCards(colors, fonts, meta, tokens, issues);
+  const lhReady = lighthouseData && !lighthouseData.error;
+  const perfCards = (!lhReady && !lighthouseData)
+    ? [{ status: 'loading', title: 'Fetching Lighthouse…', feedback: 'PageSpeed Insights is running in the background. Results will appear here automatically in 10–30 seconds.' }]
+    : buildPerfInsightCards(lh, tech, fonts);
+  const bpCards = (!lhReady && !lighthouseData)
+    ? [{ status: 'loading', title: 'Fetching Lighthouse…', feedback: 'Best Practices audit will appear here once Lighthouse completes.' }]
+    : buildBestPracticesCards(lh);
+
+  content.innerHTML = `
+    <div class="uxp-section">
+      <div class="uxp-section-header">
+        <div class="uxp-section-icon ux-icon">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+        </div>
+        <div class="uxp-section-meta">
+          <div class="uxp-section-title">UX Analysis</div>
+        </div>
+      </div>
+      <div class="uxp-cards">${uxCards.map(c => renderUXPCard(c)).join('')}</div>
+    </div>
+    <div class="uxp-section">
+      <div class="uxp-section-header">
+        <div class="uxp-section-icon perf-icon">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        </div>
+        <div class="uxp-section-meta">
+          <div class="uxp-section-title">Performance Review</div>
+        </div>
+      </div>
+      <div class="uxp-cards">${perfCards.map(c => renderUXPCard(c)).join('')}</div>
+    </div>
+    <div class="uxp-section">
+      <div class="uxp-section-header">
+        <div class="uxp-section-icon bp-icon">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        </div>
+        <div class="uxp-section-meta">
+          <div class="uxp-section-title">Best Practices</div>
+        </div>
+      </div>
+      <div class="uxp-cards">${bpCards.map(c => renderUXPCard(c)).join('')}</div>
+    </div>
+  `;
+}
+
+function renderUXPCard({ status, title, feedback, action, metric }) {
+  const icon = status === 'good' ? '✓' : status === 'warning' ? '△' : status === 'loading' ? '…' : '✗';
+  return `
+    <div class="uxp-card ${escapeHtml(status)}">
+      <div class="uxp-card-header">
+        <span class="uxp-status-dot ${escapeHtml(status)}">${icon}</span>
+        <span class="uxp-card-title">${escapeHtml(title)}</span>
+        ${metric ? `<span class="uxp-card-metric">${escapeHtml(String(metric))}</span>` : ''}
+      </div>
+      <p class="uxp-card-feedback">${escapeHtml(feedback)}</p>
+      ${action ? `<div class="uxp-card-action">💡 ${escapeHtml(action)}</div>` : ''}
+    </div>`;
+}
+
+function buildUXInsightCards(colors, fonts, meta, tokens, issues) {
+  const cards = [];
+
+  // These cards report what was measured on the page. Aesthetic verdicts have
+  // been removed deliberately: this tool measures a rendered DOM, which gives it
+  // no standing to judge "design rigour" or call a palette a "hallmark of an
+  // inconsistent design system". A designer who reads that dismisses the panel,
+  // and the measurement — which is genuinely useful — goes with it.
+
+  // 1. Colour Palette
+  const colorCount = colors.length;
+  if (colorCount > 20) {
+    cards.push({ status: 'warning', title: 'Colour Palette',
+      feedback: `${colorCount} distinct colours detected in computed styles. Large palettes are harder to keep consistent, though the count includes any colour used by third-party embeds and generated states.`,
+      action: 'Check whether these map to a defined set of roles — primary, surface, text, error — or accumulated ad hoc.' });
+  } else if (colorCount >= 4) {
+    cards.push({ status: 'good', title: 'Colour Palette',
+      feedback: `${colorCount} distinct colours detected.` });
+  } else if (colorCount > 0) {
+    cards.push({ status: 'good', title: 'Colour Palette',
+      feedback: `${colorCount} distinct colour${colorCount === 1 ? '' : 's'} detected.` });
+  }
+
+  // 2. Typography
+  const fontCount = fonts.length;
+  if (fontCount > 3) {
+    cards.push({ status: 'warning', title: 'Typography',
+      feedback: `${fontCount} font families in computed styles. Each additional web font is a separate network request. Note that one family loaded at several weights, and fonts inside third-party embeds, both add to this count.`,
+      action: 'Check how many are actually yours, and whether weight variations could replace a family.' });
+  } else if (fontCount > 0) {
+    cards.push({ status: 'good', title: 'Typography',
+      feedback: `${fontCount} font famil${fontCount === 1 ? 'y' : 'ies'} detected.` });
+  } else {
+    cards.push({ status: 'good', title: 'Typography',
+      feedback: 'No custom web fonts detected — the page uses system fonts, which load without an extra request.' });
+  }
+
+  // 3. Responsiveness
+  const hasViewport = !!meta.viewport;
+  if (hasViewport) {
+    const vp = meta.viewport || '';
+    const blocksZoom = vp.includes('user-scalable=no') || vp.includes('maximum-scale=1');
+    if (blocksZoom) {
+      cards.push({ status: 'critical', title: 'Zoom Accessibility Blocked',
+        feedback: 'The viewport meta disables user zoom (user-scalable=no or maximum-scale=1). This is a critical UX violation — users with low vision depend on browser zoom. It also violates WCAG 1.4.4 and can be flagged in legal audits.',
+        action: 'Remove user-scalable=no and maximum-scale=1 from the viewport meta tag immediately.' });
+    } else {
+      cards.push({ status: 'good', title: 'Viewport',
+        feedback: 'Viewport meta is present and user zoom is enabled.' });
+    }
+  } else {
+    cards.push({ status: 'critical', title: 'No Viewport Meta Tag',
+      feedback: 'No viewport meta tag detected, so this page renders at desktop width on phones and requires pinch-and-pan to read. Mobile-friendliness is a confirmed Google ranking signal.',
+      action: 'Add <meta name="viewport" content="width=device-width, initial-scale=1"> to your <head>.' });
+  }
+
+  // 4. Contrast & Readability
+  const contrastIssues = issues.filter(i => (i.id || '').includes('color-contrast'));
+  const totalContrastElements = contrastIssues.reduce((s, i) => s + (i.elementCount || 1), 0);
+  if (contrastIssues.length > 0) {
+    const hasCritical = contrastIssues.some(i => i.severity === 'critical' || i.severity === 'serious');
+    cards.push({ status: hasCritical ? 'critical' : 'warning', title: 'Contrast',
+      feedback: `${totalContrastElements} element${totalContrastElements === 1 ? '' : 's'} fall below the required contrast ratio. WCAG requires 4.5:1 for body text and 3:1 for large text.`,
+      action: 'Check text and background pairs with a contrast checker — browser DevTools has one built in.' });
+  } else {
+    cards.push({ status: 'good', title: 'Contrast',
+      feedback: 'No contrast failures detected in the automated check. Text over images and gradients often cannot be measured automatically, so spot-check those by eye.' });
+  }
+
+  // 5. Design tokens — reported as an observation, not a prescription. Whether a
+  // site should use CSS custom properties is an architecture decision that
+  // depends on context this tool cannot see.
+  const tokenCount = Object.keys(tokens).length;
+  if (tokenCount > 10) {
+    cards.push({ status: 'good', title: 'CSS Custom Properties',
+      feedback: `${tokenCount} CSS custom properties detected, which usually indicates a token-driven stylesheet.` });
+  } else if (tokenCount > 0) {
+    cards.push({ status: 'good', title: 'CSS Custom Properties',
+      feedback: `${tokenCount} CSS custom propert${tokenCount === 1 ? 'y' : 'ies'} detected.` });
+  } else {
+    cards.push({ status: 'good', title: 'CSS Custom Properties',
+      feedback: 'No CSS custom properties detected. Styling values appear to be set directly rather than through tokens.' });
+  }
+
+  return cards;
+}
+
+function buildPerfInsightCards(lh, tech = [], fonts = []) {
+  const cards = [];
+
+  if (!lh || lh.error) {
+    const isRateLimit = lh?.error?.toLowerCase().includes('rate limit');
+    const isInternal  = lh?.error?.toLowerCase().includes('internal');
+    if (isRateLimit) {
+      cards.push({ status: 'critical', title: 'Rate Limited',
+        feedback: 'Google is rate-limiting anonymous PageSpeed requests. Add a free API key in Settings — takes 30 seconds and gives you 25,000 free requests/day.',
+        action: 'Open ⚙️ Settings → Lighthouse → paste your free API key from console.cloud.google.com' });
+    } else if (isInternal) {
+      cards.push({ status: 'warning', title: 'Page Not Publicly Accessible',
+        feedback: 'PageSpeed Insights can only analyse publicly accessible URLs. Local (localhost), intranet, or file:// pages cannot be reached by Google\'s servers.',
+        action: 'Deploy your page or test on a publicly accessible staging URL.' });
+    } else if (lh?.error) {
+      cards.push({ status: 'warning', title: 'Lighthouse Unavailable',
+        feedback: lh.error });
+    } else {
+      cards.push({ status: 'warning', title: 'Waiting for Lighthouse',
+        feedback: 'Performance data is being fetched in the background. This takes 10–30 seconds. Results will appear here automatically when ready.' });
+    }
+    // Still show tech & font cards even without Lighthouse
+    _buildTechPerfCards(cards, tech, fonts);
+    return cards;
+  }
+
+  const perfScore = lh.performance || 0;
+  const m        = lh.metrics || {};
+  const diags    = lh.diagnostics || [];
+
+  // 1. Overall Performance Score
+  if (perfScore >= 90) {
+    cards.push({ status: 'good', title: 'Performance Score', metric: `${perfScore}/100`,
+      feedback: `Score ${perfScore}/100 — excellent. Your page loads fast, interacts quickly, and stays visually stable. This puts you in the top tier and directly improves Core Web Vitals rankings in Google Search.` });
+  } else if (perfScore >= 50) {
+    cards.push({ status: 'warning', title: 'Performance Score', metric: `${perfScore}/100`,
+      feedback: `Score ${perfScore}/100 — needs work. Real users on mid-range devices or slower networks will experience perceptible delays. Every 100ms of latency can reduce conversion rates by 1%. Prioritise the largest opportunities first.`,
+      action: 'Focus on LCP and TBT first — they have the highest user-perceived impact.' });
+  } else {
+    cards.push({ status: 'critical', title: 'Performance Score', metric: `${perfScore}/100`,
+      feedback: `Score ${perfScore}/100 — critical. Severe performance issues are directly harming user retention and SEO rankings. Google uses Core Web Vitals as a ranking signal. Pages scoring below 50 typically suffer from unoptimised assets, render-blocking scripts, or zero caching strategy.`,
+      action: 'Immediately audit: image sizes, render-blocking scripts/CSS, server response times (TTFB), and caching headers.' });
+  }
+
+  // 2. LCP
+  const lcp = m['largest-contentful-paint'];
+  if (lcp) {
+    const lcpVal = lcp.numericValue;
+    if (lcpVal <= 2500) {
+      cards.push({ status: 'good', title: 'Largest Contentful Paint (LCP)', metric: lcp.displayValue,
+        feedback: `LCP at ${lcp.displayValue} — within the good threshold (≤2.5s). Your largest above-the-fold element loads promptly. Maintain this by keeping hero images optimised and served from a CDN close to your users.` });
+    } else if (lcpVal <= 4000) {
+      cards.push({ status: 'warning', title: 'Largest Contentful Paint (LCP)', metric: lcp.displayValue,
+        feedback: `LCP at ${lcp.displayValue} — needs improvement (target ≤2.5s). Common culprits: unoptimised hero images, render-blocking CSS, slow server TTFB, or missing resource hints (preload/preconnect).`,
+        action: 'Preload your LCP image with <link rel="preload"> and serve it from a CDN. Eliminate render-blocking resources above the fold.' });
+    } else {
+      cards.push({ status: 'critical', title: 'Largest Contentful Paint (LCP)', metric: lcp.displayValue,
+        feedback: `LCP at ${lcp.displayValue} — poor (>4s). Users are staring at an incomplete page for over 4 seconds. Root causes: large uncompressed images, synchronous third-party scripts blocking render, or slow server TTFB (>800ms).`,
+        action: 'Fix TTFB first (server response), then image compression (WebP/AVIF), then remove render-blocking resources.' });
+    }
+  }
+
+  // 3. CLS
+  const cls = m['cumulative-layout-shift'];
+  if (cls) {
+    const clsVal = cls.numericValue;
+    if (clsVal <= 0.1) {
+      cards.push({ status: 'good', title: 'Layout Stability (CLS)', metric: clsVal?.toFixed(3),
+        feedback: `CLS ${clsVal?.toFixed(3)} — stable. Elements don't jump as the page loads, signalling well-crafted HTML/CSS with explicit dimensions on images and embeds. Users can interact confidently without mis-clicking shifted elements.` });
+    } else {
+      cards.push({ status: clsVal > 0.25 ? 'critical' : 'warning', title: 'Layout Stability (CLS)', metric: clsVal?.toFixed(3),
+        feedback: `CLS ${clsVal?.toFixed(3)} — layout is shifting${clsVal > 0.25 ? ' severely' : ''}. Images/ads/iframes without explicit dimensions, dynamically injected content, and web fonts causing FOUT are the primary causes. Every layout shift erodes user trust.`,
+        action: 'Add explicit width/height to all images and iframes. Use font-display:swap and reserve space for dynamic content with min-height.' });
+    }
+  }
+
+  // 4. Total Blocking Time
+  const tbt = m['total-blocking-time'];
+  if (tbt) {
+    const tbtVal = tbt.numericValue;
+    if (tbtVal <= 200) {
+      cards.push({ status: 'good', title: 'Interactivity (TBT)', metric: tbt.displayValue,
+        feedback: `TBT at ${tbt.displayValue} — the main thread is responsive. JavaScript is not blocking user input during load, meaning users can scroll and interact immediately.` });
+    } else {
+      cards.push({ status: tbtVal > 600 ? 'critical' : 'warning', title: 'Interactivity (TBT)', metric: tbt.displayValue,
+        feedback: `TBT at ${tbt.displayValue} — main thread overloaded. JavaScript is blocking user input for extended periods. Large synchronous JS bundles, unoptimised third-party scripts, and missing code splitting are the usual culprits.`,
+        action: 'Implement code splitting (dynamic import()), defer non-critical scripts, and move heavy computation to Web Workers.' });
+    }
+  }
+
+  // 5. TTFB — Server Response Time
+  const ttfb = m['server-response-time'];
+  if (ttfb) {
+    const ttfbVal = ttfb.numericValue;
+    if (ttfbVal <= 800) {
+      cards.push({ status: 'good', title: 'Server Response Time (TTFB)', metric: ttfb.displayValue,
+        feedback: `TTFB at ${ttfb.displayValue} — your server responds quickly. Good hosting, caching, or a CDN edge network is in place. This is the foundation everything else builds on.` });
+    } else {
+      cards.push({ status: ttfbVal > 1800 ? 'critical' : 'warning', title: 'Server Response Time (TTFB)', metric: ttfb.displayValue,
+        feedback: `TTFB at ${ttfb.displayValue} — server is slow to respond (target ≤800ms). This is a pure infrastructure problem: slow origin server, no CDN, unoptimised database queries, or cold-start serverless functions. It caps how fast every other metric can be.`,
+        action: 'Add a CDN (Cloudflare, Vercel Edge, Fastly), enable server-side caching, and profile your slowest backend routes.' });
+    }
+  }
+
+  // 6. DOM Size
+  const domSize = m['dom-size'];
+  if (domSize) {
+    const nodeCount = domSize.numericValue;
+    if (nodeCount <= 800) {
+      cards.push({ status: 'good', title: 'DOM Complexity', metric: `${nodeCount} nodes`,
+        feedback: `${nodeCount} DOM nodes — lean and efficient. The browser has less work to do for layout, style recalculation, and repaints. This directly benefits scroll performance and animation smoothness.` });
+    } else if (nodeCount <= 1500) {
+      cards.push({ status: 'warning', title: 'DOM Complexity', metric: `${nodeCount} nodes`,
+        feedback: `${nodeCount} DOM nodes — approaching the danger zone (Lighthouse flags >1,500). Large DOMs slow down style recalculation, forced reflows, and memory usage. Common causes: rendering full lists without virtualisation, nested wrapper divs, and leaving hidden elements in the DOM.`,
+        action: 'Virtualise long lists (react-window, TanStack Virtual), lazy-render off-screen sections, and audit deeply nested component trees.' });
+    } else {
+      cards.push({ status: 'critical', title: 'DOM Complexity', metric: `${nodeCount} nodes`,
+        feedback: `${nodeCount} DOM nodes — critically large. Every scroll event, animation, and interaction triggers expensive browser recalculations across thousands of nodes. This is a primary cause of janky 60fps failures and high memory usage on mobile.`,
+        action: 'Audit with Chrome DevTools Performance panel. Virtualise lists, defer off-screen content, and flatten deeply nested structures.' });
+    }
+  }
+
+  // 7. Page Weight
+  const pageWeight = m['total-byte-weight'];
+  if (pageWeight) {
+    const bytes = pageWeight.numericValue;
+    const kb = Math.round(bytes / 1024);
+    if (kb <= 1600) {
+      cards.push({ status: 'good', title: 'Total Page Weight', metric: `${kb} KB`,
+        feedback: `${kb} KB total transfer — well within budget. Lean pages load faster on every connection type and reduce data costs for users on mobile plans. Maintain this discipline as features are added.` });
+    } else if (kb <= 4000) {
+      cards.push({ status: 'warning', title: 'Total Page Weight', metric: `${kb} KB`,
+        feedback: `${kb} KB total transfer — heavier than ideal (target ≤1,600 KB). Common culprits: uncompressed images, unminified JS/CSS bundles, large web fonts, and third-party scripts loading their own dependencies.`,
+        action: 'Convert images to WebP/AVIF, enable Brotli/gzip on your server, audit bundle sizes with webpack-bundle-analyzer or similar.' });
+    } else {
+      cards.push({ status: 'critical', title: 'Total Page Weight', metric: `${kb} KB`,
+        feedback: `${kb} KB total transfer — critically overweight. Users on 3G connections will wait 10+ seconds. This is often caused by shipping entire UI libraries when only a fraction is used, or embedding high-resolution images without compression.`,
+        action: 'Audit with Chrome DevTools Network tab sorted by size. Aggressively tree-shake JS bundles and use next-gen image formats.' });
+    }
+  }
+
+  // 8. JS Boot Time
+  const bootup = m['bootup-time'];
+  if (bootup) {
+    const bootVal = bootup.numericValue;
+    if (bootVal <= 2000) {
+      cards.push({ status: 'good', title: 'JavaScript Execution', metric: bootup.displayValue,
+        feedback: `JS executes in ${bootup.displayValue} — scripts parse and run quickly. Low boot time means the browser can begin rendering and responding to user input without waiting for heavy JavaScript processing.` });
+    } else {
+      cards.push({ status: bootVal > 5000 ? 'critical' : 'warning', title: 'JavaScript Execution', metric: bootup.displayValue,
+        feedback: `JS takes ${bootup.displayValue} to execute — too slow. This directly delays Time to Interactive. Parsing and executing large bundles on every page load is expensive, especially on low-end mobile CPUs where execution can take 5× longer than on a desktop.`,
+        action: 'Code-split aggressively. Defer non-critical scripts. Use dynamic import() for routes and heavy components. Profile with Chrome DevTools Coverage tab to find unused code.' });
+    }
+  }
+
+  // 9. Top 5 Diagnostics
+  const actionableDiags = diags.filter(d => d.score !== null && d.score < 0.9).slice(0, 5);
+  if (actionableDiags.length > 0) {
+    const diagFeedback = actionableDiags
+      .map((d, i) => `${i + 1}. ${d.title}${d.displayValue ? ' — ' + d.displayValue : ''}`)
+      .join('\n');
+    cards.push({ status: 'warning', title: `${actionableDiags.length} Optimisation Opportunities`,
+      feedback: `Lighthouse flagged these specific issues ranked by impact:\n${diagFeedback}`,
+      action: 'Address these in order — the first item has the highest potential score improvement.' });
+  }
+
+  // 10. Tech stack & font loading (always shown)
+  _buildTechPerfCards(cards, tech, fonts);
+
+  return cards;
+}
+
+function _buildTechPerfCards(cards, tech, fonts) {
+  // Analytics bloat
+  const analyticsTools = (tech || []).filter(t => t.category === 'Analytics');
+  if (analyticsTools.length >= 3) {
+    cards.push({ status: 'warning', title: 'Analytics Overload', metric: `${analyticsTools.length} tools`,
+      feedback: `${analyticsTools.map(t => t.name).join(', ')} — ${analyticsTools.length} analytics/tracking scripts detected. Each adds to main-thread blocking time and increases TBT. Multiple tools often collect overlapping data.`,
+      action: 'Audit which analytics tools are actively used. Remove or consolidate. Load non-critical trackers with defer or load them after user interaction.' });
+  }
+
+  // Multiple frameworks
+  const frameworks = (tech || []).filter(t => t.category === 'Framework');
+  if (frameworks.length >= 2) {
+    cards.push({ status: 'critical', title: 'Multiple JS Frameworks', metric: frameworks.map(f => f.name).join(' + '),
+      feedback: `${frameworks.map(f => f.name).join(' and ')} detected simultaneously. Running multiple frontend frameworks is a serious architectural red flag — it dramatically inflates bundle size, increases parse time, and creates hydration conflicts. This is almost never intentional.`,
+      action: 'Audit script loading. Ensure only one framework owns the UI. Remove legacy framework remnants from previous migrations.' });
+  }
+
+  // jQuery on a modern framework
+  const hasJQuery  = (tech || []).some(t => t.name === 'jQuery');
+  const hasModernFw = (tech || []).some(t => ['React','Vue','Angular','Svelte','Next.js','Nuxt'].includes(t.name));
+  if (hasJQuery && hasModernFw) {
+    cards.push({ status: 'warning', title: 'jQuery + Modern Framework',
+      feedback: 'jQuery is loaded alongside a modern component framework. jQuery adds ~30 KB (minified+gzipped) and provides functionality already built into React/Vue/Angular. This is a common remnant of incremental migrations.',
+      action: 'Audit jQuery usage. Replace $.ajax() with fetch(), DOM manipulation with framework state, and remove jQuery once no direct usages remain.' });
+  }
+
+  // Font loading
+  const fontCount = (fonts || []).length;
+  if (fontCount > 3) {
+    cards.push({ status: 'warning', title: 'Web Font Load Cost', metric: `${fontCount} families`,
+      feedback: `${fontCount} font families detected. Each web font is a render-blocking network request if not preloaded. More fonts = more requests, more bytes, and longer time before text becomes visible (FOUT/FOIT).`,
+      action: 'Limit to 2 font families maximum. Use font-display:swap to prevent invisible text. Preload critical fonts with <link rel="preload">.' });
+  } else if (fontCount === 0) {
+    cards.push({ status: 'good', title: 'Web Font Load Cost',
+      feedback: 'No web fonts detected — relying on system fonts. Zero font loading cost means text renders instantly with no network round-trips. Ideal for performance-critical applications.' });
+  }
+}
+
+/**
+ * Build Best Practices insight cards from Lighthouse data.
+ * Covers Security, Efficiency, and UX/Correctness — matching what Lighthouse audits.
+ */
+function buildBestPracticesCards(lh) {
+  const cards = [];
+
+  if (!lh || lh.error) {
+    cards.push({ status: 'warning', title: 'Best Practices Unavailable',
+      feedback: lh?.error || 'Lighthouse data not yet available.' });
+    return cards;
+  }
+
+  const bpScore = lh.bestPractices || 0;
+  const diags   = lh.diagnostics   || [];
+  const passed  = lh.passedAudits  || [];
+  const allAudits = [...diags, ...passed];
+  const byId = {};
+  for (const a of allAudits) byId[a.id] = a;
+
+  const ok    = (id) => byId[id]?.score === 1;
+  const audit = (id) => byId[id];
+
+  // ── Overall score ─────────────────────────────────────────────
+  if (bpScore >= 90) {
+    cards.push({ status: 'good', title: 'Best Practices Score', metric: `${bpScore}/100`,
+      feedback: `Score ${bpScore}/100 — excellent. The page follows modern web standards: secure connections, no deprecated APIs, and clean browser hygiene.` });
+  } else if (bpScore >= 50) {
+    cards.push({ status: 'warning', title: 'Best Practices Score', metric: `${bpScore}/100`,
+      feedback: `Score ${bpScore}/100 — some issues found. A few outdated or insecure patterns are in use. Fixing them improves security, compatibility, and user trust.` });
+  } else {
+    cards.push({ status: 'critical', title: 'Best Practices Score', metric: `${bpScore}/100`,
+      feedback: `Score ${bpScore}/100 — serious issues. The page has multiple violations of modern web standards that affect security and reliability.` });
+  }
+
+  // ══ SECURITY ══════════════════════════════════════════════════
+
+  if (ok('uses-https')) {
+    cards.push({ status: 'good', title: '🔒 Secure Connection (HTTPS)',
+      feedback: 'All resources are served over HTTPS. Data between the user and server is encrypted — protecting against interception. Required for service workers, geolocation, and most modern browser APIs.' });
+  } else if (audit('uses-https')) {
+    cards.push({ status: 'critical', title: '🔒 Insecure Connection (HTTP)',
+      feedback: 'Resources are being loaded over HTTP. This exposes user data to interception and triggers browser "Not Secure" warnings, directly damaging trust.',
+      action: 'Migrate all resources to HTTPS. Get a free TLS certificate from Let\'s Encrypt and redirect all HTTP traffic to HTTPS.' });
+  }
+
+  if (ok('csp-xss')) {
+    cards.push({ status: 'good', title: '🛡️ Content Security Policy',
+      feedback: 'A strict Content Security Policy (CSP) is in place — one of the most effective defences against Cross-Site Scripting (XSS). Injected malicious scripts are blocked from running.' });
+  } else if (audit('csp-xss')) {
+    cards.push({ status: 'warning', title: '🛡️ No Strict Content Security Policy',
+      feedback: 'The page lacks a strict CSP. Without it, injected scripts can steal session cookies, redirect users, or exfiltrate data. Critical for any site handling user data or authentication.',
+      action: 'Add a Content-Security-Policy HTTP header. Start with default-src \'self\' and progressively allow trusted origins. Use nonces for inline scripts.' });
+  }
+
+  if (ok('no-vulnerable-libraries')) {
+    cards.push({ status: 'good', title: '📦 No Vulnerable Libraries',
+      feedback: 'No JavaScript libraries with known CVEs detected. Keeping dependencies up to date is one of the most impactful and often overlooked security practices.' });
+  } else if (audit('no-vulnerable-libraries')) {
+    const a = audit('no-vulnerable-libraries');
+    cards.push({ status: 'critical', title: '📦 Vulnerable Libraries Detected',
+      feedback: `${a.displayValue || 'Known vulnerable JS libraries are in use.'} Attackers actively target sites using old jQuery, lodash, and similar libraries with known exploits.`,
+      action: 'Run npm audit or check snyk.io. Update or replace vulnerable packages. Remove unused libraries entirely.' });
+  }
+
+  // ══ EFFICIENCY ════════════════════════════════════════════════
+
+  if (ok('uses-http2')) {
+    cards.push({ status: 'good', title: '⚡ HTTP/2 Protocol',
+      feedback: 'Resources are served over HTTP/2. Multiplexed connections load multiple files in parallel over one connection — significantly faster than HTTP/1.1 which serialises requests.' });
+  } else if (audit('uses-http2')) {
+    const a = audit('uses-http2');
+    cards.push({ status: 'warning', title: '⚡ Still Using HTTP/1.1',
+      feedback: `${a.displayValue ? a.displayValue + '. ' : ''}HTTP/1.1 loads resources one at a time per connection. Upgrading to HTTP/2 typically reduces load time by 20–50% for pages with multiple assets.`,
+      action: 'Enable HTTP/2 on your server, or use a CDN like Cloudflare, Vercel, or Netlify — all support HTTP/2 by default.' });
+  }
+
+  if (ok('no-document-write')) {
+    cards.push({ status: 'good', title: '✅ No document.write()',
+      feedback: 'No use of document.write() detected. This outdated API blocks HTML parsing. The page uses modern non-blocking DOM APIs instead.' });
+  } else if (audit('no-document-write')) {
+    cards.push({ status: 'warning', title: '⚠️ document.write() in Use',
+      feedback: 'document.write() blocks HTML parsing — the browser pauses rendering while the script runs. On slow connections this can add seconds of delay and cannot be parallelised.',
+      action: 'Replace with document.createElement() / appendChild(). Many legacy ad and analytics scripts still use this — audit all third-party scripts.' });
+  }
+
+  if (ok('errors-in-console')) {
+    cards.push({ status: 'good', title: '✅ No Browser Console Errors',
+      feedback: 'No JavaScript errors during page load. A clean console signals well-tested code. Console errors often indicate silently broken functionality that users experience without knowing.' });
+  } else if (audit('errors-in-console')) {
+    const a = audit('errors-in-console');
+    cards.push({ status: 'warning', title: '⚠️ JavaScript Errors on Load',
+      feedback: `${a.displayValue ? a.displayValue + '. ' : ''}JavaScript errors during load indicate broken code paths. Each error is a potential feature failure — broken forms, missing UI, or failed API calls users experience silently.`,
+      action: 'Fix all errors in Chrome DevTools → Console before deployment. Add error monitoring (Sentry, Datadog) to catch regressions in production.' });
+  }
+
+  // ══ UX / CORRECTNESS ══════════════════════════════════════════
+
+  if (ok('image-aspect-ratio')) {
+    cards.push({ status: 'good', title: '🖼️ Images Correctly Proportioned',
+      feedback: 'All images render at their natural aspect ratio — none are stretched or squashed.' });
+  } else if (audit('image-aspect-ratio')) {
+    const a = audit('image-aspect-ratio');
+    cards.push({ status: 'warning', title: '🖼️ Images Displaying Incorrectly',
+      feedback: `${a.displayValue ? a.displayValue + '. ' : ''}Images rendered at the wrong aspect ratio look unprofessional and signal a lack of QA. Common cause: CSS overriding dimensions without maintaining ratio.`,
+      action: 'Add explicit width/height attributes to <img> elements. Use CSS object-fit: cover or aspect-ratio to control display without distortion.' });
+  }
+
+  if (ok('image-size-responsive')) {
+    cards.push({ status: 'good', title: '📱 Images Sized for Device',
+      feedback: 'Images are appropriately sized for the screen resolution. No oversized images are being downloaded and scaled down — saving bandwidth and load time, especially on mobile.' });
+  } else if (audit('image-size-responsive')) {
+    const a = audit('image-size-responsive');
+    cards.push({ status: 'warning', title: '📱 Oversized Images for Screen',
+      feedback: `${a.displayValue ? a.displayValue + '. ' : ''}Serving desktop-resolution images to mobile devices wastes 3–4× more bandwidth than needed and slows mobile load significantly.`,
+      action: 'Use srcset and sizes attributes to serve appropriately-sized images per device. Image CDNs (Cloudinary, Imgix) automate this.' });
+  }
+
+  if (ok('deprecations')) {
+    cards.push({ status: 'good', title: '✅ No Deprecated APIs',
+      feedback: 'No deprecated browser APIs detected. The page uses supported, modern APIs that won\'t break in future browser updates.' });
+  } else if (audit('deprecations')) {
+    cards.push({ status: 'warning', title: '⚠️ Deprecated Browser APIs',
+      feedback: 'Deprecated APIs are being called. These are scheduled for removal from browsers — they will silently break for users on updated browsers without warning.',
+      action: 'Check Chrome DevTools → Console for deprecation warnings and replace each with the modern equivalent before browser support is dropped.' });
+  }
+
+  if (cards.length === 1) {
+    cards.push({ status: 'good', title: 'Detailed Audit',
+      feedback: 'No specific best-practice issues were flagged by Lighthouse for this page.' });
+  }
+
+  return cards;
 }
 
 function escapeHtml(str) {

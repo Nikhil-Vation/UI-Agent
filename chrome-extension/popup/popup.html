@@ -20,15 +20,17 @@
       <h1>SiteScope 360</h1>
     </div>
     <div class="header-right">
-      <!-- Demo tier selector -->
+      <!-- Demo tier selector. It also reports the current tier, so updatePlanBadge()
+           suppresses the plan badge while this is visible rather than showing two
+           identical chips side by side. -->
       <select id="demo-tier-select" class="demo-tier-select" title="Switch plan tier (demo)" aria-label="Demo plan tier">
         <option value="free">Free</option>
         <option value="pro">Pro</option>
       </select>
       <!-- Plan badge — hidden until auth resolves -->
       <span id="plan-badge" class="plan-badge hidden" title="Your current plan"></span>
-      <button id="btn-account" class="icon-btn hidden" title="Account" aria-label="Account">👤</button>
-      <button id="btn-settings" class="icon-btn" title="Settings" aria-label="Settings">⚙️</button>
+      <button id="btn-account" class="icon-btn hidden" title="Account" aria-label="Account"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></button>
+      <button id="btn-settings" class="icon-btn" title="Settings" aria-label="Settings"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
     </div>
   </header>
 
@@ -189,7 +191,7 @@
   <div id="account-modal" class="paywall-modal hidden" role="dialog" aria-modal="true" aria-labelledby="account-modal-title">
     <div class="paywall-card account-card">
       <button id="account-modal-close" class="paywall-close" aria-label="Close">✕</button>
-      <div class="paywall-icon">👤</div>
+      <div class="paywall-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>
       <h3 id="account-modal-title" class="paywall-title" id="account-email-display">Account</h3>
       <p id="account-plan-display" class="paywall-desc"></p>
       <div id="account-scan-info" class="account-scan-info hidden"></div>
@@ -206,23 +208,36 @@
     <!-- Intro Hero -->
     <div id="intro-hero" class="intro-hero">
       <div class="intro-glow"></div>
-      <div class="intro-icon-stack">
-        <span class="intro-icon intro-icon-1">♿</span>
-        <span class="intro-icon intro-icon-2">🛡️</span>
-        <span class="intro-icon intro-icon-3">✨</span>
-      </div>
       <h2 class="intro-title">Make the Web <span id="typewriter-word" class="typewriter-word"></span><span class="intro-cursor">|</span></h2>
-      <p class="intro-subtitle">SiteScope 360 gives you a full-spectrum diagnosis of any webpage — <strong>accessibility audit</strong>, <strong>tech stack</strong>, <strong>design profile</strong> and <strong>AI fix suggestions</strong> — all 100% private, nothing leaves your browser.</p>
+      <p class="intro-subtitle">SiteScope 360 finds what Lighthouse and axe already pass, writes the fix, and re-tests to confirm it worked — <strong>private by default</strong>, nothing leaves your browser unless you choose cloud AI.</p>
       <div class="intro-features">
-        <div class="intro-feature"><span class="intro-feature-icon">🔍</span><span class="intro-feature-text">One-click scan</span></div>
-        <div class="intro-feature"><span class="intro-feature-icon">🤖</span><span class="intro-feature-text">AI code suggestions</span></div>
-        <div class="intro-feature"><span class="intro-feature-icon">📱</span><span class="intro-feature-text">Mobile responsive</span></div>
-        <div class="intro-feature"><span class="intro-feature-icon">⚡</span><span class="intro-feature-text">Lazy loading tips</span></div>
-        <div class="intro-feature"><span class="intro-feature-icon">🔒</span><span class="intro-feature-text">Privacy first</span></div>
-        <div class="intro-feature"><span class="intro-feature-icon">📊</span><span class="intro-feature-text">Lighthouse tips</span></div>
+        <div class="intro-feature">
+          <span class="intro-feature-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></span>
+          <span class="intro-feature-text">Beyond Lighthouse</span>
+        </div>
+        <div class="intro-feature">
+          <span class="intro-feature-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></span>
+          <span class="intro-feature-text">Fixes &amp; verifies</span>
+        </div>
+        <div class="intro-feature">
+          <span class="intro-feature-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h12"/></svg></span>
+          <span class="intro-feature-text">Keyboard &amp; screen reader</span>
+        </div>
+        <div class="intro-feature">
+          <span class="intro-feature-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><line x1="6" y1="9" x2="6" y2="21"/></svg></span>
+          <span class="intro-feature-text">Diff or PR export</span>
+        </div>
+        <div class="intro-feature">
+          <span class="intro-feature-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span>
+          <span class="intro-feature-text">Private by default</span>
+        </div>
+        <div class="intro-feature">
+          <span class="intro-feature-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="m9 15 2 2 4-4"/></svg></span>
+          <span class="intro-feature-text">Evidence &amp; VPAT</span>
+        </div>
       </div>
       <div class="intro-arrow">
-        <span>👇</span>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
         <span class="intro-arrow-text">Hit Scan to get started</span>
       </div>
     </div>
@@ -258,13 +273,14 @@
       <div id="breakdown-rows" class="breakdown-rows"></div>
     </div>
 
-    <!-- Always-visible score attribution + Lighthouse loading disclaimer -->
+    <!-- Always-visible score attribution -->
     <div id="score-attribution" class="score-attribution hidden">
       <span class="attribution-text">Powered by <strong>axe-core</strong> &amp; <strong>Google Lighthouse</strong></span>
-      <span id="lh-loading-hint" class="lh-loading-hint hidden">
-        <span class="lh-pulse"></span> Lighthouse loading — may take 30–60s
-      </span>
+      <span id="lh-loading-hint" class="lh-loading-hint hidden"></span>
     </div>
+
+    <!-- Lighthouse category rings (dashboard) -->
+    <div id="lh-rings" class="lh-rings hidden"></div>
 
     <!-- Severity badges -->
     <div id="severity-badges" class="severity-badges hidden">
@@ -276,25 +292,29 @@
 
     <!-- Tab bar -->
     <div id="tab-bar" class="tab-bar hidden">
-      <button class="tab-btn active" data-tab="issues">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-        Issues
+      <button class="tab-btn active" data-tab="issues" title="Issues">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        <span class="tab-label">Issues</span>
       </button>
-      <button class="tab-btn" data-tab="design">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="13.5" cy="6.5" r="0.5" fill="currentColor"/><circle cx="17.5" cy="10.5" r="0.5" fill="currentColor"/><circle cx="8.5" cy="7.5" r="0.5" fill="currentColor"/><circle cx="6.5" cy="12.5" r="0.5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>
-        Technology
+      <button class="tab-btn" data-tab="design" title="Technology">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="13.5" cy="6.5" r="0.5" fill="currentColor"/><circle cx="17.5" cy="10.5" r="0.5" fill="currentColor"/><circle cx="8.5" cy="7.5" r="0.5" fill="currentColor"/><circle cx="6.5" cy="12.5" r="0.5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>
+        <span class="tab-label">Tech</span>
       </button>
-      <button class="tab-btn" data-tab="checklist">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-        Checklist
+      <button class="tab-btn" data-tab="checklist" title="Checklist">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+        <span class="tab-label">Checks</span>
       </button>
-      <button class="tab-btn" data-tab="tips">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-        Insights
+      <button class="tab-btn" data-tab="tips" title="Insights">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        <span class="tab-label">Tips</span>
       </button>
-      <button class="tab-btn" data-tab="export">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-        Export
+      <button class="tab-btn" data-tab="ux-perf" title="UX &amp; Performance">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        <span class="tab-label">UX & Perf</span>
+      </button>
+      <button class="tab-btn" data-tab="export" title="Export">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        <span class="tab-label">Export</span>
       </button>
     </div>
 
@@ -334,6 +354,10 @@
         <div class="live-preview-stat">
           <span class="live-preview-stat-label">DOM Changes</span>
           <span id="live-preview-dom-count" class="live-preview-stat-value">0</span>
+        </div>
+        <div class="live-preview-stat">
+          <span class="live-preview-stat-label">Available</span>
+          <span id="live-preview-available-count" class="live-preview-stat-value">0</span>
         </div>
       </div>
       <div class="live-preview-verify">
@@ -400,6 +424,29 @@
       <button class="filter-pill" data-filter="minor">Minor</button>
     </div>
 
+    <!-- 3.8 — impairment simulation: show, don't tell -->
+    <div class="impairment-bar hidden" id="impairment-bar">
+      <span class="impairment-label">See it as a user would:</span>
+      <select id="impairment-select" class="impairment-select" aria-label="Simulate a visual impairment">
+        <option value="">None</option>
+        <option value="protanopia">Protanopia (red-blind)</option>
+        <option value="deuteranopia">Deuteranopia (green-blind)</option>
+        <option value="tritanopia">Tritanopia (blue-blind)</option>
+        <option value="achromatopsia">Achromatopsia (no color)</option>
+        <option value="lowVision">Low vision (blur)</option>
+        <option value="contrastLoss">Contrast sensitivity loss</option>
+      </select>
+    </div>
+
+    <!-- 4.3 — natural language control over the current scan -->
+    <div class="chat-bar hidden" id="chat-bar">
+      <input type="text" id="chat-input" class="chat-input"
+             placeholder="e.g. fix everything critical, but don&#8217;t touch colors"
+             aria-label="Tell SiteScope 360 what to do with these issues">
+      <button id="chat-send" class="chat-send-btn" type="button">Go</button>
+    </div>
+    <p id="chat-status" class="chat-status hidden"></p>
+
     <!-- ═══ Tab: Issues ═══ -->
     <div id="tab-issues" class="tab-content active">
       <div id="issues-container" class="issues-container hidden">
@@ -408,14 +455,20 @@
         </div>
         <ul id="issues-list" class="issues-list" role="list"></ul>
       </div>
+
+      <!-- Findings on elements that PASS axe-core and Lighthouse -->
+      <div id="judgment-container" class="judgment-container hidden">
+        <div class="judgment-header">
+          <h2>Beyond automated checks <span id="judgment-count" class="issue-count"></span></h2>
+          <p id="judgment-summary" class="judgment-summary"></p>
+        </div>
+        <ul id="judgment-list" class="issues-list" role="list"></ul>
+      </div>
     </div>
 
     <!-- ═══ Tab: Checklist ═══ -->
     <div id="tab-checklist" class="tab-content">
       <div class="checklist-container">
-        <div id="checklist-lighthouse" class="checklist-lighthouse hidden">
-          <div id="checklist-lh-scores" class="checklist-lh-scores"></div>
-        </div>
         <div id="checklist-list" class="checklist-list"></div>
         <div id="checklist-empty" class="empty-state">
           <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.3"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
@@ -533,13 +586,28 @@
         <p>Scan a page to see its design profile</p>
       </div>
       <div id="design-content" class="design-content hidden">
-        <div class="design-section" id="design-tech-section"></div>
-        <div class="design-section" id="design-upgrades-section"></div>
         <div class="design-section" id="design-meta-section"></div>
+        <div class="design-section" id="design-pagehealth-section"></div>
+        <div class="design-section" id="design-tech-section"></div>
+        <div class="design-section" id="design-analytics-section"></div>
+        <div class="design-section" id="design-hosting-section"></div>
+        <div class="design-section" id="design-upgrades-section"></div>
         <div class="design-section" id="design-colors-section"></div>
         <div class="design-section" id="design-fonts-section"></div>
+        <div class="design-section" id="design-typescale-section"></div>
         <div class="design-section" id="design-tokens-section"></div>
+        <div class="design-section" id="design-pagestats-section"></div>
       </div>
+    </div>
+
+    <!-- ═══ Tab: UX & Performance ═══ -->
+    <div id="tab-ux-perf" class="tab-content" data-pro-tab="true">
+      <div id="uxp-empty" class="empty-state">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.3"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        <div class="empty-title">Run a scan first</div>
+        <div class="empty-sub">UX and performance analysis will appear here</div>
+      </div>
+      <div id="uxp-content" class="uxp-container hidden"></div>
     </div>
 
     <!-- ═══ Tab: Export ═══ -->
@@ -561,10 +629,83 @@
             <span class="export-card-label">PDF Report</span>
             <span class="export-card-desc">Detailed report</span>
           </div>
+          <div class="export-card" data-export="session">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            <span class="export-card-label">All Fixes</span>
+            <span class="export-card-desc">One patch file</span>
+          </div>
+          <div class="export-card" data-export="vision">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
+            <span class="export-card-label">Visual Scan</span>
+            <span class="export-card-desc">Screenshot-based (AI)</span>
+          </div>
+          <div class="export-card" data-export="transcript">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a9 9 0 0 1 0 14"/></svg>
+            <span class="export-card-label">Screen Reader</span>
+            <span class="export-card-desc">Hear the page</span>
+          </div>
+          <div class="export-card" data-export="crawl">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+            <span class="export-card-label">Scan Whole Site</span>
+            <span class="export-card-desc">Crawl the sitemap</span>
+          </div>
+          <div class="export-card" data-export="badge">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="8" r="6"/><path d="M15.5 13.5 17 22l-5-3-5 3 1.5-8.5"/></svg>
+            <span class="export-card-label">Score Badge</span>
+            <span class="export-card-desc">Embeddable SVG</span>
+          </div>
+          <div class="export-card" data-export="vpat">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+            <span class="export-card-label">VPAT Draft</span>
+            <span class="export-card-desc">Conformance report</span>
+          </div>
+          <div class="export-card" data-export="github-pr">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><line x1="6" y1="9" x2="6" y2="21"/></svg>
+            <span class="export-card-label">Open Pull Request</span>
+            <span class="export-card-desc">GitHub</span>
+          </div>
+          <div class="export-card export-card-evidence" data-export="evidence">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 11 11 13 15 9"/></svg>
+            <span class="export-card-label">Evidence Record</span>
+            <span class="export-card-desc">For compliance</span>
+          </div>
           <div class="export-card" data-export="clipboard">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg>
             <span class="export-card-label">Clipboard</span>
             <span class="export-card-desc">Copy summary</span>
+          </div>
+        </div>
+
+        <!-- 6.1 — agency client profile (local only, stamps exported reports) -->
+        <div class="export-history-section">
+          <div class="export-section-header">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+            Client Branding
+          </div>
+          <label class="input-label">
+            <span>Active client</span>
+            <select id="client-profile-select" style="background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:6px 8px;font-size:12px;width:100%;">
+              <option value="">None — unbranded exports</option>
+            </select>
+          </label>
+          <div style="display:flex;gap:6px;margin-top:6px;">
+            <input type="text" id="client-profile-name" placeholder="Client name" style="flex:1;font-size:11px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);">
+            <button type="button" id="client-profile-add" class="chat-send-btn">Add</button>
+          </div>
+        </div>
+
+        <!-- 6.2 — opt-in team sync: portable file, no backend -->
+        <div class="export-history-section">
+          <div class="export-section-header">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+            Team Sync
+          </div>
+          <p style="font-size:10px;color:var(--text-muted);opacity:0.8;margin:0 0 8px;">Export a file to share fix history with your team, or import one. No account, no server — this never leaves your machine unless you share the file yourself.</p>
+          <div style="display:flex;gap:6px;">
+            <button type="button" id="team-export-btn" class="chat-send-btn">Export for team</button>
+            <button type="button" id="team-import-btn" class="cost-meter-reset">Import file…</button>
+            <button type="button" id="audit-clear-btn" class="cost-meter-reset">Clear log</button>
+            <input type="file" id="team-import-file" accept="application/json" class="hidden">
           </div>
         </div>
 
@@ -626,13 +767,60 @@
     <div class="settings-group">
       <h3>
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-        Gemini AI
+        AI Model
       </h3>
+
+      <!-- Provider selector -->
       <label class="input-label">
-        <span>Gemini API Key <a href="https://aistudio.google.com/app/apikey" target="_blank" style="font-size:10px;opacity:0.7">(get free key)</a></span>
-        <input type="password" id="setting-gemini-api-key" placeholder="AIza… (optional)" autocomplete="off" spellcheck="false">
+        <span>LLM Provider</span>
+        <select id="setting-llm-provider" style="background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:6px 8px;font-size:12px;width:100%;">
+          <option value="none">None — Local / Chrome AI only</option>
+          <option value="gemini" selected>Gemini (Google)</option>
+          <option value="openai">OpenAI</option>
+          <option value="anthropic">Anthropic (Claude)</option>
+          <option value="mistral">Mistral AI</option>
+        </select>
       </label>
-      <div style="font-size:10px;color:var(--text-muted);opacity:0.7;margin-top:2px;">Enable Gemini API for AI-powered accessibility fixes. Free tier: 15 requests/min.</div>
+
+      <!-- Model selector (shown when provider != none) -->
+      <label class="input-label" id="llm-model-row" style="margin-top:6px;">
+        <span>Model <span id="llm-model-badge" style="font-size:9px;background:rgba(124,58,237,0.25);color:#a78bfa;border-radius:4px;padding:1px 5px;margin-left:4px;">recommended</span></span>
+        <select id="setting-llm-model" style="background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:6px;padding:6px 8px;font-size:12px;width:100%;"></select>
+      </label>
+
+      <!-- API key (label changes per provider) -->
+      <label class="input-label" id="llm-key-row" style="margin-top:6px;">
+        <span id="llm-key-label">API Key <a id="llm-key-link" href="https://aistudio.google.com/app/apikey" target="_blank" style="font-size:10px;opacity:0.7">(get free key)</a></span>
+        <input type="password" id="setting-llm-api-key" placeholder="Paste your API key…" autocomplete="off" spellcheck="false">
+      </label>
+      <div style="display:flex;align-items:center;gap:6px;margin-top:4px;">
+        <span id="llm-key-status" style="font-size:10px;font-weight:600;"></span>
+      </div>
+      <div id="llm-provider-hint" style="font-size:10px;color:var(--text-muted);opacity:0.7;margin-top:2px;">Gemini free tier: 15 req/min · 1,500 req/day</div>
+
+      <!-- 6.4 — visible, clearly-labeled spend estimate -->
+      <div class="cost-meter" id="cost-meter">
+        <span>Est. spend this session: <strong id="cost-meter-amount">$0.00</strong></span>
+        <button type="button" id="cost-meter-reset" class="cost-meter-reset">Reset</button>
+      </div>
+      <div class="cost-meter-note">Estimate from list pricing and approximate token counts — check your provider dashboard for actual billing.</div>
+    </div>
+
+    <div class="settings-group">
+      <h3>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
+        GitHub — Pull Requests
+      </h3>
+      <p style="font-size:10px;color:var(--text-muted);opacity:0.8;margin:0 0 6px;">Opens a real PR with each fix documented for review — it never rewrites files in your repo automatically. Token is stored locally and only ever sent to api.github.com.</p>
+      <label class="input-label">
+        <span>Personal access token <a href="https://github.com/settings/tokens/new?scopes=repo&description=SiteScope%20360" target="_blank" style="font-size:10px;opacity:0.7">(create one)</a></span>
+        <input type="password" id="setting-github-token" placeholder="ghp_…" autocomplete="off" spellcheck="false">
+      </label>
+      <div style="display:flex;gap:6px;margin-top:6px;">
+        <input type="text" id="setting-github-owner" placeholder="owner" style="flex:1;font-size:11px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);">
+        <input type="text" id="setting-github-repo" placeholder="repo" style="flex:1;font-size:11px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);">
+        <input type="text" id="setting-github-branch" placeholder="main" style="width:64px;font-size:11px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);">
+      </div>
     </div>
 
     <div class="settings-group">
@@ -659,6 +847,10 @@
       <label class="toggle-label">
         <input type="checkbox" id="setting-badge" checked>
         <span>Show issue count on icon</span>
+      </label>
+      <label class="toggle-label">
+        <input type="checkbox" id="setting-ambient-scan">
+        <span>Watch pages you've already scanned, and notify on regressions</span>
       </label>
     </div>
 
@@ -694,6 +886,20 @@
     </div>
   </div>
 
+  <script src="../lib/fix-export.js"></script>
+  <script src="../lib/evidence.js"></script>
+  <script src="../lib/audit-log.js"></script>
+  <script src="../lib/framework.js"></script>
+  <script src="../lib/crawl.js"></script>
+  <script src="../lib/screenreader.js"></script>
+  <script src="../lib/reading-order.js"></script>
+  <script src="../lib/vpat.js"></script>
+  <script src="../lib/risk.js"></script>
+  <script src="../lib/badge.js"></script>
+  <script src="../lib/branding.js"></script>
+  <script src="../lib/team-sync.js"></script>
+  <script src="../lib/trend.js"></script>
+  <script src="../lib/impairment.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

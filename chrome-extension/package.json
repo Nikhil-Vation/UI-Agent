@@ -1,0 +1,9 @@
+{
+  "name": "sitescope360-extension",
+  "private": true,
+  "type": "module",
+  "description": "Marks lib/ as ES modules for Node so the test suite can import it directly. Chrome loads the extension from manifest.json and ignores this file.",
+  "scripts": {
+    "test": "node tests/run.mjs"
+  }
+}

@@ -1,0 +1,23 @@
+# Presentation working files — keep the folder for drafts, exports, and
+# speaker-only material without committing binary/export junk or local
+# scratch copies. The .md scripts themselves (PITCH-SCRIPT.md, FEATURES.md)
+# are intentionally NOT ignored — those are the deliverables.
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Exported/binary decks — keep the source .md as the tracked version,
+# not the one-off exports generated from it
+*.pptx
+*.key
+*.pdf
+*.pages
+
+# Local drafts and speaker scratch notes
+drafts/
+*.draft.md
+*-notes-local.md
+
+# Office lock files
+~$*
